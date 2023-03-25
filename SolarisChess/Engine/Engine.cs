@@ -13,28 +13,21 @@ public class Engine
     public const string name = "SolarisChess 1.0.0";
     public const string author = "Okka";
 
-    public const string startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-	public TimeControl time = new TimeControl();
+	public SearchController controller = new SearchController();
     private Search search;
 
 	private bool positionLoaded;
 
     public IGame game;
-	public Uci uci;
 
-	public bool running { get; private set; }
+	public bool Running { get; private set; }
     public bool WhiteToPlay => game.CurrentPlayer().IsWhite;
     public Engine()
     {
         game = GameFactory.Create();
-        search = new Search(game, time);
-		uci = new Uci();
-
+        search = new Search(game, controller);
         search.OnSearchComplete += OnSearchComplete;
 		search.OnInfo += OnInfo;
-
-        uci.Initialize();
     }
 
 	private void HandleUCICommand(string? command)
@@ -49,11 +42,11 @@ public class Engine
 			case "uci":
 				Console.WriteLine($"id name {name}");
 				Console.WriteLine($"id author {author}");
-				//Console.WriteLine($"option name Hash type spin default {Transpositions.DEFAULT_SIZE_MB} min 1 max 2047");//consider gcAllowVeryLargeObjects if larger TT is needed
-				Console.WriteLine(uci.UciOk());
+				Console.WriteLine("option name Hash type spin default 32 max 2048");
+				Console.WriteLine(Game.Uci.UciOk());
 				break;
 			case "isready":
-				Console.WriteLine(uci.ReadyOk());
+				Console.WriteLine(Game.Uci.ReadyOk());
 				break;
 			case "position":
 				LoadPosition(tokens);
@@ -90,13 +83,13 @@ public class Engine
 
 	public async Task Start()
     {
-        running = true;
+        Running = true;
 		await Read();
     }
 
     public void Stop()
     {
-        time.Stop();
+        controller.Stop();
 		search.CancelSearch();
     }
 
@@ -104,17 +97,17 @@ public class Engine
     {
 		Task.Delay(1000).ContinueWith((t) =>
 		{
-			time.Stop();
+			controller.Stop();
 
 			Log("QUITTING");
-			running = false;
+			Running = false;
 			Environment.Exit(0);
 		});
     }
 
 	public async Task Read()
 	{
-		while (running)
+		while (Running)
 		{
 			string? input = await Task.Run(Console.ReadLine);
 
@@ -155,15 +148,15 @@ public class Engine
 		int myTime = WhiteToPlay ? whiteTime : blackTime;
 		int myIncrement = WhiteToPlay ? whiteIncrement: blackIncrement;
 
-		time.Initialize(myTime, myIncrement, movesToGo, maxDepth, maxNodes, moveTime);
+		controller.Initialize(myTime, myIncrement, movesToGo, maxDepth, maxNodes, moveTime);
 
-		if (time.isInfinite && Array.IndexOf(tokens, "infinite") == -1)
+		if (controller.isInfinite && Array.IndexOf(tokens, "infinite") == -1 && maxDepth == 0 && maxNodes == 0)
 		{
 			Console.WriteLine("Invalid 'go' parameters!");
 			return;
 		}
 
-		Task.Factory.StartNew(() => search.IterativeDeepeningSearch(maxDepth), TaskCreationOptions.LongRunning);
+		Task.Factory.StartNew(() => search.IterativeDeepeningSearch(), TaskCreationOptions.LongRunning);
 	}
 
 	private void LoadPosition(string[] tokens)
@@ -190,7 +183,7 @@ public class Engine
 		else
 		{
 			Log("'position' parameters missing or not understood. Assuming 'startpos'.");
-			game.NewGame(startFen);
+			game.NewGame();
 		}
 
 		int firstMove = Array.IndexOf(tokens, "moves") + 1;
@@ -205,7 +198,7 @@ public class Engine
 
 	private void MakeUCIMove(string uciMove)
 	{
-		Move move = uci.MoveFromUci(game.Pos, uciMove);
+		Move move = Game.Uci.MoveFromUci(game.Pos, uciMove);
 
 		if (!move.IsNullMove() && game.Pos.State.LastMove != move)
 			game.Pos.MakeMove(move, game.Pos.State);
@@ -226,8 +219,8 @@ public class Engine
 	{
 		game.Pos.MakeMove(extMove, game.Pos.State);
 
-		var bestMove = uci.BestMove(extMove.Move, ExtMove.Empty);
-		Console.WriteLine(bestMove);
+		var bestMove = Game.Uci.MoveToString(extMove.Move);
+		Console.WriteLine("bestmove " + bestMove);
 
 		if (game.Pos.IsMate)
 		{
@@ -246,7 +239,7 @@ public class Engine
 		{
 			var counts = new Dictionary<HashKey, int>();
 			int max = 0;
-			foreach (var key in game.Pos.zobristKeyHistory)
+			foreach (var key in game.Pos.ZobristKeyHistory)
 			{
 				if (counts.ContainsKey(key))
 					counts[key]++;

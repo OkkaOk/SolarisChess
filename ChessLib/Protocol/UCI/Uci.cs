@@ -93,7 +93,7 @@ public class Uci : IUci
     {
         var moveList = pos.GenerateMoves();
         foreach (var move in moveList.Get())
-            if (uciMove.Equals(move.Move.ToString(), StringComparison.InvariantCultureIgnoreCase))
+            if (uciMove.Equals(MoveToString(move), StringComparison.InvariantCultureIgnoreCase))
                 return move.Move;
 
         return Move.EmptyMove;
@@ -172,12 +172,12 @@ public class Uci : IUci
         =>
             $"info hashfull {Game.Table.Fullness()} tbhits {tbHits} nodes {nodes} time {time.Milliseconds} nps {Nps(in nodes, in time)}";
 
-    public string MoveToString(Move m, ChessMode chessMode = ChessMode.Normal)
+    public string MoveToString(Move move, ChessMode chessMode = ChessMode.Normal)
     {
-        if (m.IsNullMove())
+        if (move.IsNullMove())
             return "(none)";
 
-        var (from, to, type) = m;
+        var (from, to, type) = move;
 
         if (type == MoveTypes.Castling && chessMode != ChessMode.Chess960)
             to = Square.Create(from.Rank, to > from ? File.FileG : File.FileC);
@@ -191,7 +191,7 @@ public class Uci : IUci
         s[index++] = to.RankChar;
 
         if (type == MoveTypes.Promotion)
-            s[index++] = m.PromotedPieceType().GetPieceChar();
+            s[index++] = move.PromotedPieceType().GetPieceChar();
 
         return new string(s[..index]);
     }

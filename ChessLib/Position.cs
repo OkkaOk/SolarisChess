@@ -56,7 +56,7 @@ public sealed class Position : IPosition
     private readonly IPositionValidator _positionValidator;
     private Player _sideToMove;
 
-    public Stack<HashKey> zobristKeyHistory { get; set; }
+    public List<HashKey> ZobristKeyHistory { get; set; }
 
     public Position(IBoard board, IPieceValue pieceValues)
     {
@@ -162,16 +162,6 @@ public sealed class Position : IPosition
             threats |= GetAttacks(BitBoards.PopLsb(ref attackers), pt);
         return threats;
     }
-
-	public BitBoard AllAttacksBy(Player p)
-	{
-		return AttacksBy(PieceTypes.Pawn, p) |
-               AttacksBy(PieceTypes.Knight, p) |
-               AttacksBy(PieceTypes.Bishop, p) |
-               AttacksBy(PieceTypes.Rook, p) |
-               AttacksBy(PieceTypes.Queen, p) |
-               AttacksBy(PieceTypes.King, p);
-	}
 
 	public bool IsCapture(Move m)
     {
@@ -281,7 +271,7 @@ public sealed class Position : IPosition
         _castlingRookSquare.Fill(Square.None);
         _sideToMove = Player.White;
         ChessMode = ChessMode.Normal;
-        zobristKeyHistory = new();
+        ZobristKeyHistory = new();
 
         State ??= new State();
     }
@@ -709,10 +699,7 @@ public sealed class Position : IPosition
 
     public void MakeMove(Move m, in State newState, bool givesCheck)
     {
-		// Push the previous position to stack before updating the key
-		//zobristKeyHistory.Push(State.Key);
-
-		State = State.CopyTo(newState);
+        State = State.CopyTo(newState);
         State.LastMove = m;
 
         var k = State.Key ^ Zobrist.GetZobristSide();
@@ -861,6 +848,9 @@ public sealed class Position : IPosition
         SetCheckInfo(State);
         State.UpdateRepetition();
 
+		// Push the new position to the history
+		ZobristKeyHistory.Add(State.Key);
+
 		//Debug.Assert(_positionValidator.Validate().IsOk);
 	}
 
@@ -986,7 +976,15 @@ public sealed class Position : IPosition
     public BitBoard PawnsOnColor(Player p, Square sq)
         => Pieces(PieceTypes.Pawn, p) & sq.Color().ColorBB();
 
-    public bool SemiOpenFileOn(Player p, Square sq)
+	public int PieceCount() => Board.PieceCount();
+
+	public int PieceCount(Piece pc) => Board.PieceCount(pc.Type(), pc.ColorOf());
+
+	public int PieceCount(PieceTypes pt) => Board.PieceCount(pt);
+
+	public int PieceCount(PieceTypes pt, Player p) => Board.PieceCount(pt, p);
+
+	public bool SemiOpenFileOn(Player p, Square sq)
         => (Board.Pieces(p, PieceTypes.Pawn) & sq.File.BitBoardFile()).IsEmpty;
 
     public bool BishopPaired(Player p) =>
@@ -1231,7 +1229,9 @@ public sealed class Position : IPosition
 
     public void TakeMove(Move m)
     {
-        Debug.Assert(!m.IsNullMove());
+		ZobristKeyHistory.Remove(State.Key);
+
+		Debug.Assert(!m.IsNullMove());
 
         // flip sides
         _sideToMove = ~_sideToMove;
@@ -1288,7 +1288,7 @@ public sealed class Position : IPosition
         // Set state to previous state
         State = State.Previous;
         Ply--;
-        //zobristKeyHistory.Pop();
+
         //Debug.Assert(_positionValidator.Validate().IsOk);
     }
 
@@ -1588,7 +1588,7 @@ public sealed class Position : IPosition
 	public bool IsThreeFoldRepetition()
     {
         var counts = new Dictionary<HashKey, int>();
-        foreach (var key in zobristKeyHistory)
+        foreach (var key in ZobristKeyHistory)
         {
             if (counts.ContainsKey(key))
                 counts[key]++;

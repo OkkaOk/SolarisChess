@@ -15,6 +15,8 @@ public class MoveOrdering
 
 	public ExtMove[] OrderMoves(ExtMove[] moves, IPosition position)
 	{
+		Game.Table.Probe(position.State.Key, out TranspositionTableEntry entry);
+
 		return moves.OrderByDescending(extMove =>
 		{
 			int moveScoreGuess = 0;
@@ -22,7 +24,7 @@ public class MoveOrdering
 			var movePieceType = position.GetPiece(extMove.Move.FromSquare()).Type();
 			var capturePieceType = position.GetPiece(extMove.Move.ToSquare()).Type();
 
-			if (Game.Table.Probe(position.State.Key, out TranspositionTableEntry entry) && entry.Move.Equals(extMove.Move))
+			if (entry.Move.Equals(extMove.Move))
 			{
 				Console.WriteLine("Found move in tt and using it to order moves");
 				moveScoreGuess += 10000;

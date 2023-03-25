@@ -119,6 +119,7 @@ public sealed class State : IEquatable<State>
         other.PliesFromNull = PliesFromNull;
         other.EnPassantSquare = EnPassantSquare;
         other.Previous = this;
+        other.Key = Key;
 
         // copy over material
         other.NonPawnMaterial[0] = NonPawnMaterial[0];
@@ -163,7 +164,7 @@ public sealed class State : IEquatable<State>
         if (end < 4)
             return;
 
-        var statePrevious = Previous.Previous;
+        var statePrevious = this;
         for (var i = 4; i <= end; i += 2)
         {
             statePrevious = statePrevious.Previous.Previous;

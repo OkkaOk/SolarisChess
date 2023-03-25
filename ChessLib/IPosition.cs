@@ -38,7 +38,7 @@ public interface IPosition : IEnumerable<Piece>
 {
     bool IsProbing { get; set; }
 
-	Stack<HashKey> zobristKeyHistory { get; set; }
+	List<HashKey> ZobristKeyHistory { get; set; }
 
 	Action<IPieceSquare> PieceUpdated { get; set; }
 
@@ -122,7 +122,15 @@ public interface IPosition : IEnumerable<Piece>
 
     BitBoard PawnsOnColor(Player p, Square sq);
 
-    bool SemiOpenFileOn(Player p, Square sq);
+	int PieceCount();
+
+	int PieceCount(Piece pc);
+
+	int PieceCount(PieceTypes pt);
+
+	int PieceCount(PieceTypes pt, Player p);
+
+	bool SemiOpenFileOn(Player p, Square sq);
 
     bool BishopPaired(Player p);
 
@@ -157,9 +165,6 @@ public interface IPosition : IEnumerable<Piece>
     bool AttackedByKing(Square sq, Player p);
 
     BitBoard AttacksBy(PieceTypes pt, Player p);
-
-    BitBoard AllAttacksBy(Player p);
-
 
 	bool IsCapture(Move m);
 

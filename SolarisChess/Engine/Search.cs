@@ -27,7 +27,7 @@ public class Search
 
 	TranspositionTable Table => Game.Table;
 	MoveOrdering moveOrdering;
-	TimeControl time;
+	SearchController controller;
 	Evaluation evaluation;
 
 	Stopwatch timer = new Stopwatch();
@@ -44,10 +44,10 @@ public class Search
 	int numTranspositions;
 	int furthestNode;
 
-	public Search(IGame game, TimeControl time)
+	public Search(IGame game, SearchController controller)
 	{
 		this.game = game;
-		this.time = time;
+		this.controller = controller;
 
 		//Table.SetSize(20);
 		moveOrdering = new MoveOrdering();
@@ -55,7 +55,7 @@ public class Search
 	}
 
 	// Iterative deepening search
-	public void IterativeDeepeningSearch(int maxDepth)
+	public void IterativeDeepeningSearch()
 	{
 		timer.Start();
 		negamaxTime = 0;
@@ -67,25 +67,23 @@ public class Search
 		bestMoveThisIteration = bestMove = Move.EmptyMove;
 		Stopwatch watch = Stopwatch.StartNew();
 
-		Engine.Log($"Search scheduled to take {time.AllocatedTimePerMove}ms!");
+		Engine.Log($"Search scheduled to take {(controller.isInfinite ? "as long as needed" : controller.AllocatedTimePerMove + "ms")}!");
 
 		int searchDepth = 0;
 
 		Task.Factory.StartNew(async () =>
 		{
-			while (time.CanSearchDeeper(searchDepth, numNodes))
+			while (controller.CanSearchDeeper(searchDepth, numNodes))
 			{
 				await Task.Delay(200);
 			}
 			abortSearch = true;
 		});
 
-		while (time.CanSearchDeeper(searchDepth, numNodes))
+		while (controller.CanSearchDeeper(++searchDepth, numNodes))
 		{
-			searchDepth++;
-
 			Table.NewSearch();
-			time.StartInterval();
+			controller.StartInterval();
 
 			long beginTime = timer.ElapsedMilliseconds;
 			Negamax(searchDepth, 0, Evaluation.negativeInfinity, Evaluation.positiveInfinity);
@@ -97,7 +95,7 @@ public class Search
 			bestMove = bestMoveThisIteration;
 
 			// Update diagnostics
-			OnInfo?.Invoke(searchDepth, bestMove.Score, numNodes, time.Elapsed);
+			OnInfo?.Invoke(searchDepth, bestMove.Score, numNodes, controller.Elapsed);
 
 			// Exit search if found a mate
 			if (Evaluation.IsMateScore(bestMove.Score))
@@ -113,6 +111,7 @@ public class Search
 
 		watch.Stop();
 		Engine.Log("Time spent on this move: " + watch.ElapsedMilliseconds);
+		Engine.Log("Total nodes visited: " + numNodes);
 		Engine.Log("Total branches cut off: " + numCutoffs);
 		Engine.Log("Total transpositions: " + numTranspositions);
 		Engine.Log("Current Zobrist: " + position.State.Key.Key);
@@ -129,6 +128,8 @@ public class Search
 	// and "beta" could be thought of as the upper bound on the worst possible evaluation found so far.
 	int Negamax(int depth, int plyFromRoot, int alpha, int beta)
 	{
+		numNodes++;
+
 		if (abortSearch)
 			return SearchInvalid;
 
@@ -136,15 +137,8 @@ public class Search
 		
 		if (plyFromRoot > 0)
 		{
-			//if (position.zobristKeyHistory.Contains(Hash))
-			//	return 0;
-			//if (position.IsDraw())
-			//	return 0;
-			//if (position.IsInsufficientMaterial())
-			//	return 0;
-
-			//if (position.IsThreeFoldRepetition())
-			//	return 0;
+			if (position.IsDraw())
+				return 0;
 
 			// Skip this position if a mating sequence has already been found earlier in
 			// the search, which would be shorter than any mate we could find from here.
@@ -196,29 +190,27 @@ public class Search
 			return plyFromRoot; // Return a little bit of score, trying to prolong the draw.
 		}
 
-		int value = Evaluation.negativeInfinity;
+		int evaluation = Evaluation.negativeInfinity;
 
 		for (int i = 0; i < moves.Length; i++)
 		{
-			numNodes++;
-
 			// Take the evaluation on opponent's turn and negate it, because what's bad for them is good for us and vice versa
-			position.MakeMove(moves[i], new State());
-			value = -Negamax(depth - 1, plyFromRoot + 1, -beta, -alpha);
+			position.MakeMove(moves[i], new());
+			evaluation = -Negamax(depth - 1, plyFromRoot + 1, -beta, -alpha);
 			position.TakeMove(moves[i]);
 
-			if (value == SearchInvalid || value == -SearchInvalid)
+			if (evaluation == -SearchInvalid)
 			{
 				Console.WriteLine("info string INVALID");
 				return SearchInvalid;
 			}
 
 
-			moves[i].Score = value;
+			moves[i].Score = evaluation;
 			// Found a new best move in this position
-			if (value > alpha)
+			if (evaluation > alpha)
 			{
-				alpha = value;
+				alpha = evaluation;
 				if (plyFromRoot == 0)
 				{
 					bestMoveThisIteration = moves[i];
@@ -234,12 +226,12 @@ public class Search
 			}
 		}
 
-		entry.StaticValue = value;
+		entry.StaticValue = evaluation;
 		entry.Key32 = Hash.LowerKey;
 
-		if (value <= alphaOrig)
+		if (evaluation <= alphaOrig)
 			entry.Type = Bound.Alpha;
-		else if (value >= beta)
+		else if (evaluation >= beta)
 			entry.Type = Bound.Beta;
 		else
 			entry.Type = Bound.Exact;
@@ -247,7 +239,7 @@ public class Search
 		entry.Depth = (sbyte)depth;
 		Table.Save(Hash, entry);
 
-		return value;
+		return evaluation;
 	}
 
 	// Search capture moves until a 'quiet' position is reached.
@@ -285,10 +277,10 @@ public class Search
 			if (!position.IsCapture(move))
 				continue;
 
-			position.MakeMove(move, new State());
+			numNodes++;
+			position.MakeMove(move, new());
 			eval = -QuiescenceSearch(-beta, -alpha, plyFromRoot + 1);
 			position.TakeMove(move);
-			numQNodes++;
 
 			if (eval >= beta)
 			{

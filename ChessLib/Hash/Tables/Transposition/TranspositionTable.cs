@@ -123,7 +123,7 @@ public sealed class TranspositionTable : ITranspositionTable
 	/// Probes the transposition table for a entry that matches the position key.
 	/// </summary>
 	/// <param name="key">The position key</param>
-	/// <returns> Entry if one was found, empty if not found</returns>
+	/// <returns> True if one was found, false otherwise</returns>
 	public bool Probe(in HashKey key, out TranspositionTableEntry entry)
 	{
         var ttc = FindCluster(in key);

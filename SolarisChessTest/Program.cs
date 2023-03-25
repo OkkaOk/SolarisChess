@@ -1,8 +1,10 @@
 ﻿using ChessLib.Factories;
+using ChessLib.MoveGeneration;
 using ChessLib.Protocol.UCI;
 using ChessLib.Types;
 using SolarisChess;
 using System.Diagnostics;
+using System.Drawing;
 
 namespace SolarisChessTest;
 
@@ -11,6 +13,32 @@ internal class Program
 	static void Main(string[] args)
 	{
 
+	}
+
+	static void MoveGenerationSpeedTest()
+	{
+		var Game = GameFactory.Create();
+		Game.NewGame("8/6pk/pb5p/8/1P2qP2/P7/2r2pNP/1QR4K b - - 1 2");
+
+		var watch = new Stopwatch();
+		long fastest = long.MaxValue;
+		long lastElapsedTicks = 0;
+		int count = 10000;
+
+		watch.Start();
+		for (int i = 0; i < count; i++)
+		{
+			Game.Pos.GenerateMoves();
+			long took = watch.ElapsedTicks - lastElapsedTicks;
+			if (took < fastest)
+				fastest = took;
+
+			lastElapsedTicks = watch.ElapsedTicks;
+		}
+
+		Console.WriteLine("Generated moves " + count + " times. Took " + watch.ElapsedTicks + " ticks -> " + (1000000 * watch.ElapsedTicks / Stopwatch.Frequency) + "μs");
+		Console.WriteLine("Fastest: " + fastest + " ticks -> " + (1000000 * fastest / Stopwatch.Frequency) + "μs");
+		Console.WriteLine("Average: " + watch.ElapsedTicks / count + " ticks -> " + (1000000 * watch.ElapsedTicks / count / Stopwatch.Frequency) + "μs");
 	}
 
 	void Issue60Test()
@@ -48,7 +76,7 @@ internal class Program
 		var game = GameFactory.Create();
 		game.NewGame();
 
-		var attacks = game.Pos.AllAttacksBy(Player.White);
+		var attacks = game.Pos.AttacksBy(PieceTypes.AllPieces, Player.White);
 
 		foreach (var att in attacks)
 		{

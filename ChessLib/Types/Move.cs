@@ -210,7 +210,6 @@ public record struct Move(ushort Data) : ISpanFormattable
                 destination[3] = '-';
                 destination[4] = 'O';
                 charsWritten = MaxMoveStringSize;
-
                 return true;
             case MoveTypes.Promotion:
                 destination[0] = from.FileChar;

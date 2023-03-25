@@ -26,6 +26,7 @@ SOFTWARE.
 
 using System;
 using System.Collections.Generic;
+using ChessLib.Enums;
 using ChessLib.Types;
 
 namespace ChessLib.Protocol.UCI;
@@ -71,5 +72,7 @@ public interface IUci
 
     string Fullness(in ulong tbHits, in ulong nodes, in TimeSpan time);
 
-    string ToString();
+    string MoveToString(Move move, ChessMode chessMode = ChessMode.Normal);
+
+	string ToString();
 }
