@@ -1,7 +1,7 @@
-﻿using ChessLib;
-using ChessLib.Hash.Tables.Transposition;
-using ChessLib.MoveGeneration;
-using ChessLib.Types;
+﻿using Rudzoft.ChessLib;
+using Rudzoft.ChessLib.Hash.Tables.Transposition;
+using Rudzoft.ChessLib.MoveGeneration;
+using Rudzoft.ChessLib.Types;
 using System;
 
 namespace SolarisChess;
@@ -13,34 +13,41 @@ public class MoveOrdering
 
 	}
 
-	public ExtMove[] OrderMoves(MoveList moves, IPosition position)
+	public ValMove[] OrderMoves(MoveList moves, IPosition position, ValMove[] pvMoves, int plyFromRoot)
 	{
-		Game.Table.Probe(position.State.Key, out TranspositionTableEntry entry);
+		var entry = new TranspositionTableEntry();
+		Engine.Table.Probe(position.State.Key, ref entry);
 
-		return moves.OrderByDescending(extMove =>
+		return moves.OrderByDescending(valMove =>
 		{
 			int moveScoreGuess = 0;
 
-			var (from, to, type) = extMove.Move;
+			var (from, to, type) = valMove.Move;
 
 			var movePieceType = position.GetPiece(from).Type();
 			var capturePieceType = position.GetPiece(to).Type();
 
-			if (entry.Move.Equals(extMove.Move))
+			if (valMove.Move.Equals(entry.Move))
 			{
 				Console.WriteLine("Found move in tt and using it to order moves");
 				return 1000000;
 			}
 
-			if (position.IsCapture(extMove))
-				moveScoreGuess += 10 * Evaluation.GetPieceValue(capturePieceType) - Evaluation.GetPieceValue(movePieceType);
+			if (pvMoves[plyFromRoot].Equals(valMove))
+			{
+				return 100000000;
+			}
+
+			// MVV/LVA
+			if (position.IsCapture(valMove))
+				moveScoreGuess += 10 * Evaluation.GetPieceValue(capturePieceType) - 10 * Evaluation.GetPieceValue(movePieceType);
 
 			//if (position.GivesCheck(extMove))
 			//	moveScoreGuess += Evaluation.pawnValue;
 
 			if (type == MoveTypes.Promotion)
 			{
-				var promotionType = extMove.Move.PromotedPieceType();
+				var promotionType = valMove.Move.PromotedPieceType();
 				moveScoreGuess += Evaluation.GetPieceValue(promotionType) * 2;
 			}
 

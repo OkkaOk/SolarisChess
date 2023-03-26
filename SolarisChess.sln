@@ -9,9 +9,9 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SolarisChessTest", "Solaris
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SolarisChess.Test", "SolarisChess.Test\SolarisChess.Test.csproj", "{AE213697-6A9C-4270-B6C6-0CBCDCA8EADC}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ChessLib", "ChessLib\ChessLib.csproj", "{730C122A-D5C1-418A-8B5F-EF0500C6AD69}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolarisChess.Benchmark", "SolarisChess.Benchmark\SolarisChess.Benchmark.csproj", "{0B9FAA2E-BECA-43F9-B599-F6E44BAC26EC}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Rudzoft.ChessLib", "..\ChessLib-engine_work\src\Rudzoft.ChessLib\Rudzoft.ChessLib.csproj", "{2EF1BD33-E999-46EA-A884-36A982DCFEA7}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -45,14 +45,6 @@ Global
 		{AE213697-6A9C-4270-B6C6-0CBCDCA8EADC}.Release|Any CPU.Build.0 = Release|Any CPU
 		{AE213697-6A9C-4270-B6C6-0CBCDCA8EADC}.Release|x64.ActiveCfg = Release|Any CPU
 		{AE213697-6A9C-4270-B6C6-0CBCDCA8EADC}.Release|x64.Build.0 = Release|Any CPU
-		{730C122A-D5C1-418A-8B5F-EF0500C6AD69}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{730C122A-D5C1-418A-8B5F-EF0500C6AD69}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{730C122A-D5C1-418A-8B5F-EF0500C6AD69}.Debug|x64.ActiveCfg = Debug|x64
-		{730C122A-D5C1-418A-8B5F-EF0500C6AD69}.Debug|x64.Build.0 = Debug|x64
-		{730C122A-D5C1-418A-8B5F-EF0500C6AD69}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{730C122A-D5C1-418A-8B5F-EF0500C6AD69}.Release|Any CPU.Build.0 = Release|Any CPU
-		{730C122A-D5C1-418A-8B5F-EF0500C6AD69}.Release|x64.ActiveCfg = Release|x64
-		{730C122A-D5C1-418A-8B5F-EF0500C6AD69}.Release|x64.Build.0 = Release|x64
 		{0B9FAA2E-BECA-43F9-B599-F6E44BAC26EC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{0B9FAA2E-BECA-43F9-B599-F6E44BAC26EC}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0B9FAA2E-BECA-43F9-B599-F6E44BAC26EC}.Debug|x64.ActiveCfg = Debug|Any CPU
@@ -61,6 +53,14 @@ Global
 		{0B9FAA2E-BECA-43F9-B599-F6E44BAC26EC}.Release|Any CPU.Build.0 = Release|Any CPU
 		{0B9FAA2E-BECA-43F9-B599-F6E44BAC26EC}.Release|x64.ActiveCfg = Release|Any CPU
 		{0B9FAA2E-BECA-43F9-B599-F6E44BAC26EC}.Release|x64.Build.0 = Release|Any CPU
+		{2EF1BD33-E999-46EA-A884-36A982DCFEA7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2EF1BD33-E999-46EA-A884-36A982DCFEA7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2EF1BD33-E999-46EA-A884-36A982DCFEA7}.Debug|x64.ActiveCfg = Debug|x64
+		{2EF1BD33-E999-46EA-A884-36A982DCFEA7}.Debug|x64.Build.0 = Debug|x64
+		{2EF1BD33-E999-46EA-A884-36A982DCFEA7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2EF1BD33-E999-46EA-A884-36A982DCFEA7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2EF1BD33-E999-46EA-A884-36A982DCFEA7}.Release|x64.ActiveCfg = Release|x64
+		{2EF1BD33-E999-46EA-A884-36A982DCFEA7}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

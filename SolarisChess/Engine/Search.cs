@@ -1,60 +1,56 @@
 ﻿
-using ChessLib;
-using ChessLib.MoveGeneration;
-using ChessLib.Notation;
-using ChessLib.Types;
-using ChessLib.Enums;
-using ChessLib.Hash;
+using Rudzoft.ChessLib;
+using Rudzoft.ChessLib.MoveGeneration;
+using Rudzoft.ChessLib.Notation;
+using Rudzoft.ChessLib.Types;
+using Rudzoft.ChessLib.Enums;
+using Rudzoft.ChessLib.Hash;
 using System;
 using System.Diagnostics;
 using static System.Math;
-using ChessLib.Hash.Tables.Transposition;
+using Rudzoft.ChessLib.Hash.Tables.Transposition;
+using SolarisChess.Extensions;
 
 namespace SolarisChess;
 
-public class Search
+public static class Search
 {
 	const int transpositionTableSize = 64000;
 	const int SearchInvalid = 12345;
 
-	public event Action<ExtMove>? OnSearchComplete;
-	public event Action<int, int, long, int>? OnInfo;
+	public static event Action<ValMove>? OnSearchComplete;
+	public static event Action<int, int, long, int, int>? OnInfo;
 
-	private ExtMove bestMoveThisIteration = ExtMove.Empty;
-	private ExtMove bestMove = ExtMove.Empty;
+	private static ValMove bestMoveThisIteration = ValMove.Empty;
+	private static ValMove bestMove = ValMove.Empty;
+	private static ValMove[] pvMoves = new ValMove[Values.MAX_PLY]; 
 
-	private bool abortSearch;
+	private static bool abortSearch;
 
-	TranspositionTable Table => Game.Table;
-	MoveOrdering moveOrdering;
-	TimeControl controller;
-	Evaluation evaluation;
+	static TranspositionTable Table => Engine.Table;
+	static MoveOrdering moveOrdering;
+	static TimeControl controller = Engine.controller;
 
-	Stopwatch timer = new Stopwatch();
-	long negamaxTime = 0;
-	long quiescenceTime = 0;
+	static Stopwatch timer = new Stopwatch();
+	static long negamaxTime = 0;
+	static long quiescenceTime = 0;
 
-	IGame game;
-	IPosition position => game.Pos;
+	static IGame Game => Engine.Game;
+	static IPosition position => Game.Pos;
 
 	// Diagnostics
-	int numNodes;
-	int numQNodes;
-	int numCutoffs;
-	int numTranspositions;
+	static int numNodes;
+	static int numQNodes;
+	static int numCutoffs;
+	static int numTranspositions;
 
-	public Search(IGame game, TimeControl controller)
+	static Search()
 	{
-		this.game = game;
-		this.controller = controller;
-
-		//Table.SetSize(20);
 		moveOrdering = new MoveOrdering();
-		evaluation = new Evaluation(position);
 	}
 
 	// Iterative deepening search
-	public void IterativeDeepeningSearch()
+	public static void IterativeDeepeningSearch()
 	{
 		timer.Start();
 		negamaxTime = 0;
@@ -85,7 +81,7 @@ public class Search
 			controller.StartInterval();
 
 			long beginTime = timer.ElapsedMilliseconds;
-			Negamax(searchDepth, 0, Evaluation.negativeInfinity, Evaluation.positiveInfinity);
+			Negamax(searchDepth, 0, Evaluation.negativeInfinity, Evaluation.positiveInfinity, 0, false);
 			negamaxTime += timer.ElapsedMilliseconds - beginTime;
 
 			if (abortSearch)
@@ -94,16 +90,16 @@ public class Search
 			bestMove = bestMoveThisIteration;
 
 			// Update diagnostics
-			OnInfo?.Invoke(searchDepth, bestMove.Score, numNodes, controller.Elapsed);
+			OnInfo?.Invoke(searchDepth, bestMove.Score, numNodes, controller.Elapsed, Table.Fullness() * 10);
 
 			// Exit search if found a mate
 			if (Evaluation.IsMateScore(bestMove.Score))
 				break;
 		}
 
-		if (bestMove == ExtMove.Empty)
+		if (bestMove == ValMove.Empty)
 		{
-			bestMove = GenerateAndOrderMoves()[0];
+			bestMove = GenerateAndOrderMoves(0)[0];
 			Engine.Log("-------------Had to choose a stupid move-------------");
 		}
 
@@ -115,7 +111,6 @@ public class Search
 		//Engine.Log("Current Zobrist: " + position.State.Key.Key);
 		Engine.Log("Negamax time: " + (negamaxTime - quiescenceTime));
 		Engine.Log("Quiescence time: " + quiescenceTime);
-		Engine.Log("Hash filled: " + Game.Table.Fullness() + "%");
 
 		OnSearchComplete?.Invoke(bestMove);
 	}
@@ -125,17 +120,30 @@ public class Search
 	// Beta is the lowest (best) evaluation that the minimizing player (opponent) has found so far
 	// In a more general sense, "alpha" could be thought of as the lower bound on the best possible evaluation found so far,
 	// and "beta" could be thought of as the upper bound on the worst possible evaluation found so far.
-	int Negamax(int depth, int plyFromRoot, int alpha, int beta)
+	static int Negamax(int depth, int plyFromRoot, int alpha, int beta, int nullMoveCount, bool lastMoveWasCapture)
 	{
 		numNodes++;
 
 		if (abortSearch)
 			return SearchInvalid;
 
+		if (nullMoveCount < 2 && depth > 2 && !position.InCheck && !lastMoveWasCapture)
+		{
+			position.MakeNullMove(new());
+			int score = -Negamax(depth - 3, plyFromRoot + 1, -beta, -alpha, nullMoveCount + 1, false);
+			position.TakeNullMove();
+			if (score >= beta)
+			{
+				Console.WriteLine("Used null move to cut off a branch!");
+				return score;
+			}
+		}
+
 		var Hash = position.State.Key;
 		int alphaOrig = alpha;
 
-		if (Table.Probe(Hash, out var entry) && entry.Depth >= depth)
+		var entry = new TranspositionTableEntry();
+		if (Table.Probe(Hash, ref entry) && entry.Depth >= depth)
 		{
 			numTranspositions++;
 
@@ -176,7 +184,7 @@ public class Search
 			return eval;
 		}
 
-		var moves = GenerateAndOrderMoves();
+		var moves = GenerateAndOrderMoves(plyFromRoot);
 
 		if (moves.Length == 0)
 		{
@@ -194,7 +202,20 @@ public class Search
 		{
 			// Take the evaluation on opponent's turn and negate it, because what's bad for them is good for us and vice versa
 			position.MakeMove(moves[i], new());
-			evaluation = -Negamax(depth - 1, plyFromRoot + 1, -beta, -alpha);
+
+			if (depth >= 3 && i >= LMRDepth(plyFromRoot, lastMoveWasCapture))
+			{
+				int reducedDepth = depth - 1;
+				if (reducedDepth <= 0)
+					reducedDepth = 1;
+				evaluation = -Negamax(reducedDepth, plyFromRoot + 1, -beta, -alpha, nullMoveCount, position.IsCapture(moves[i]));
+			}
+			else
+			{
+				evaluation = -Negamax(depth - 1, plyFromRoot + 1, -beta, -alpha, nullMoveCount, position.IsCapture(moves[i]));
+			}
+			//evaluation = -Negamax(depth - 1, plyFromRoot + 1, -beta, -alpha, nullMoveCount, position.IsCapture(moves[i]));
+
 			position.TakeMove(moves[i]);
 
 			if (evaluation == -SearchInvalid)
@@ -213,6 +234,7 @@ public class Search
 				{
 					bestMoveThisIteration = moves[i];
 				}
+				pvMoves[plyFromRoot] = moves[i];
 			}
 
 			// Move was *too* good, so opponent won't allow this position to be reached
@@ -235,13 +257,15 @@ public class Search
 			entry.Type = Bound.Exact;
 
 		entry.Depth = (sbyte)depth;
+		entry.Move = pvMoves[plyFromRoot];
+
 		Table.Save(Hash, entry);
 
 		return evaluation;
 	}
 
 	// Search capture moves until a 'quiet' position is reached.
-	int QuiescenceSearch(int alpha, int beta, int plyFromRoot)
+	static int QuiescenceSearch(int alpha, int beta, int plyFromRoot)
 	{
 		if (abortSearch)
 			return SearchInvalid;
@@ -253,7 +277,7 @@ public class Search
 		// A player isn't forced to make a capture (typically), so see what the evaluation is without capturing anything.
 		// This prevents situations where a player only has bad captures available from being evaluated as bad,
 		// when the player might have good non-capture moves available.
-		int eval = evaluation.Evaluate();
+		int eval = Evaluation.Evaluate(position);
 
 		if (eval >= beta)
 			return beta;
@@ -261,7 +285,7 @@ public class Search
 		if (alpha < eval)
 			alpha = eval;
 
-		var moves = GenerateAndOrderMoves();
+		var moves = GenerateAndOrderMoves(plyFromRoot);
 
 		if (moves.Length == 0)
 		{
@@ -299,12 +323,22 @@ public class Search
 		return alpha;
 	}
 
-	public void CancelSearch()
+	private static int LMRDepth(int plyFromRoot, bool lastMoveWasCapture)
+	{
+		int movesLeft = 60 - plyFromRoot; // assuming an average game length of 60 plies
+		int reduction = Min(2, movesLeft / 2); // reduce by 2 plies or half the remaining moves, whichever is smaller
+		int depth = Max(1, plyFromRoot - reduction);
+		if (lastMoveWasCapture && depth > 1)
+			depth--; // additional depth reduction for consecutive captures
+		return depth;
+	}
+
+	public static void CancelSearch()
 	{
 		abortSearch = true;
 	}
 
-	void InitDebugInfo()
+	static void InitDebugInfo()
 	{
 		numNodes = 0;
 		numQNodes = 0;
@@ -312,10 +346,10 @@ public class Search
 		numTranspositions = 0;
 	}
 
-	ExtMove[] GenerateAndOrderMoves(MoveGenerationType type = MoveGenerationType.Legal)
+	static ValMove[] GenerateAndOrderMoves(int plyFromRoot, MoveGenerationType type = MoveGenerationType.Legal)
 	{
 		MoveList moves = position.GenerateMoves(type);
-		return moveOrdering.OrderMoves(moves, position);
+		return moveOrdering.OrderMoves(moves, position, pvMoves, plyFromRoot);
 	}
 }
 
