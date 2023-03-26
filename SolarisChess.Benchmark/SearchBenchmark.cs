@@ -2,18 +2,18 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
-using ChessLib.Fen;
-using ChessLib.Hash.Tables.Transposition;
-using ChessLib.MoveGeneration;
-using ChessLib.ObjectPoolPolicies;
-using ChessLib.Protocol.UCI;
-using ChessLib.Types;
-using ChessLib.Validation;
-using ChessLib;
+using Rudzoft.ChessLib.Fen;
+using Rudzoft.ChessLib.Hash.Tables.Transposition;
+using Rudzoft.ChessLib.MoveGeneration;
+using Rudzoft.ChessLib.ObjectPoolPolicies;
+using Rudzoft.ChessLib.Protocol.UCI;
+using Rudzoft.ChessLib.Types;
+using Rudzoft.ChessLib.Validation;
+using Rudzoft.ChessLib;
 using Microsoft.Extensions.ObjectPool;
 using Microsoft.Extensions.Options;
 using SolarisChess;
-using ChessLib.Factories;
+using Rudzoft.ChessLib.Factories;
 
 namespace SolarisChess.Benchmark;
 
@@ -27,23 +27,23 @@ namespace SolarisChess.Benchmark;
 [MemoryDiagnoser]
 public class SearchBenchmark
 {
-	public int depth = 6;
-	public Search search;
-	TimeControl time = new TimeControl();
+	//public int depth = 6;
+	//public Search search;
+	//TimeControl time = new TimeControl();
 
-	[GlobalSetup]
-	public void Setup()
-	{
-		var game = GameFactory.Create();
-		game.NewGame();
+	//[GlobalSetup]
+	//public void Setup()
+	//{
+	//	var game = GameFactory.Create();
+	//	game.NewGame();
 
-		search = new Search(game, time);
-	}
+	//	search = new Search(game, time);
+	//}
 
-	[Benchmark(Description = "Search")]
-	public void Search()
-	{
-		time.Initialize(0, 0, 0, 0, depth, 0, 0);
-		search.IterativeDeepeningSearch();
-	}
+	//[Benchmark(Description = "Search")]
+	//public void Search()
+	//{
+	//	time.Initialize(0, 0, 0, 0, depth, 0, 0);
+	//	search.IterativeDeepeningSearch();
+	//}
 }

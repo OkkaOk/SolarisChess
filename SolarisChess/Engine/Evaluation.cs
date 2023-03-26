@@ -1,7 +1,8 @@
-﻿using ChessLib;
-using ChessLib.Evaluation;
-using ChessLib.Hash.Tables.Transposition;
-using ChessLib.Types;
+﻿using Rudzoft.ChessLib;
+using Rudzoft.ChessLib.Evaluation;
+using Rudzoft.ChessLib.Hash.Tables.Transposition;
+using Rudzoft.ChessLib.Types;
+using SolarisChess.Extensions;
 using System;
 using static System.Math;
 
@@ -30,60 +31,53 @@ public class Evaluation
 	/// <summary>
 	/// (Start) 0 - 1 (Endgame)
 	/// </summary>
-	float phase = 0;
-
-	IPosition position;
-
-	public Evaluation(IPosition position)
-	{
-		this.position = position;
-	}
+	static float phase = 0;
 
 	// Performs static evaluation of the current position.
 	// The position is assumed to be 'quiet', i.e no captures are available that could drastically affect the evaluation.
 	// The score that's returned is given from the perspective of whoever's turn it is to move.
 	// So a positive score means the player who's turn it is to move has an advantage, while a negative score indicates a disadvantage.
-	public int Evaluate()
+	public static int Evaluate(IPosition position)
 	{
 		int eval = 0;
 		int whiteEval = 0;
 		int blackEval = 0;
 
-		phase = CalculatePhase();
+		phase = CalculatePhase(position);
 
 		//if (KpkBitBase.IsDraw(position)) // TODO ?
 		//	return 0;
 
-		CountMaterial(out int whiteMaterial, out int blackMaterial, out int whiteMaterialNoPawns, out int blackMaterialNoPawns);
+		CountMaterial(position, out int whiteMaterial, out int blackMaterial, out int whiteMaterialNoPawns, out int blackMaterialNoPawns);
 
 		eval += whiteMaterial - blackMaterial;
-		eval += EvaluatePieceSquareTables();
-		eval += CalculateMobilityScore();
+		eval += EvaluatePieceSquareTables(position);
+		eval += CalculateMobilityScore(position);
 
 		Player leadingSide = whiteEval > blackEval ? Player.White : Player.Black;
-		MopUpEval(leadingSide, ref eval);
+		MopUpEval(position, leadingSide, ref eval);
 
 		int perspective = position.SideToMove.IsWhite ? 1 : -1;
 		return eval * perspective;
 	}
 
-	int MidGameEval(float phase)
+	static int MidGameEval(float phase)
 	{
 		return 0;
 	}
 
-	int EndGameEval(float phase)
+	static int EndGameEval(float phase)
 	{
 		return 0;
 	}
 
 	/// <summary>
-	///	Calculates the current phase of the game
+	///	Calculates the current phase of the Game
 	/// </summary>
 	/// <returns>Value between 0 and 1
 	/// <br>1 -> Total endgame (only pawns)</br>
 	/// <br>0 -> Every piece on the board</br></returns>
-	float CalculatePhase()
+	static float CalculatePhase(IPosition position)
 	{
 		int phase = TotalPhase;
 
@@ -95,7 +89,7 @@ public class Evaluation
 		return Max(0, (phase * 256 + (TotalPhase / 2)) / (TotalPhase * 256));
 	}
 
-	void CountMaterial(out int whiteMaterial, out int blackMaterial, out int whiteMaterialNoPawns, out int blackMaterialNoPawns)
+	static void CountMaterial(IPosition position, out int whiteMaterial, out int blackMaterial, out int whiteMaterialNoPawns, out int blackMaterialNoPawns)
 	{
 		var whitePawnCount = position.PieceCount(PieceTypes.Pawn, Player.White);
 		var whiteKnightCount = position.PieceCount(PieceTypes.Knight, Player.White);
@@ -122,7 +116,7 @@ public class Evaluation
 		blackMaterial = blackMaterialNoPawns + blackPawnCount * pawnValue;
 	}
 
-	private int CalculateMobilityScore()
+	private static int CalculateMobilityScore(IPosition position)
 	{
 		int GetScore(Player side)
 		{
@@ -150,7 +144,7 @@ public class Evaluation
 		return GetScore(Player.White) - GetScore(Player.Black);
 	}
 
-	void MopUpEval(Player winningSide, ref int eval)
+	static void MopUpEval(IPosition position, Player winningSide, ref int eval)
 	{
 		if (Abs(eval) < 2)
 			return;
@@ -171,7 +165,7 @@ public class Evaluation
 		eval += (int)(phase * mopUpScore);
 	}
 
-	int EvaluatePieceSquareTables()
+	static int EvaluatePieceSquareTables(IPosition position)
 	{
 		int value = 0;
 		var pieces = position.Pieces();
@@ -229,7 +223,7 @@ public class Evaluation
 	//	return value;
 	//}
 
-	void GetPieceSquareTable(PieceTypes pieceType, out int[] middleTable, out int[] endTable)
+	static void GetPieceSquareTable(PieceTypes pieceType, out int[] middleTable, out int[] endTable)
 	{
 		switch (pieceType)
 		{

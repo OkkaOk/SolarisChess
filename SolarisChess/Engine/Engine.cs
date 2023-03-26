@@ -1,36 +1,63 @@
-﻿using ChessLib;
-using ChessLib.Factories;
-using ChessLib.MoveGeneration;
-using ChessLib.Protocol.UCI;
-using ChessLib.Types;
+﻿using Rudzoft.ChessLib;
+using Rudzoft.ChessLib.Factories;
+using Rudzoft.ChessLib.MoveGeneration;
+using Rudzoft.ChessLib.Protocol.UCI;
+using Rudzoft.ChessLib.Types;
 using System.Text;
-using ChessLib.Extensions;
+using Rudzoft.ChessLib.Extensions;
+using Microsoft.Extensions.ObjectPool;
+using Microsoft.Extensions.Options;
+using Rudzoft.ChessLib.Fen;
+using Rudzoft.ChessLib.Hash.Tables.Transposition;
+using Rudzoft.ChessLib.ObjectPoolPolicies;
+using Rudzoft.ChessLib.Validation;
+using SolarisChess.Extensions;
 
 namespace SolarisChess;
 
-public class Engine
+public static class Engine
 {
     public const string name = "SolarisChess 1.0.0";
     public const string author = "Okka";
 
-	public TimeControl controller = new TimeControl();
-    private Search search;
+	public static TimeControl controller = new TimeControl();
 
-	private bool positionLoaded;
+	private static bool positionLoaded;
 
-    public IGame game;
+    public static Game Game;
+	public static TranspositionTable Table;
 
-	public bool Running { get; private set; }
-    public bool WhiteToPlay => game.CurrentPlayer().IsWhite;
-    public Engine()
+	public static bool Running { get; private set; }
+    public static bool WhiteToPlay => Game.CurrentPlayer().IsWhite;
+
+    static Engine()
     {
-        game = GameFactory.Create();
-        search = new Search(game, controller);
-        search.OnSearchComplete += OnSearchComplete;
-		search.OnInfo += OnInfo;
+		var ttConfig = new TranspositionTableConfiguration { DefaultSize = 1 };
+		var options = Options.Create(ttConfig);
+		Table = new TranspositionTable(options);
+
+		var uci = new Uci();
+		uci.Initialize();
+
+		var cpu = new Cpu();
+
+		var moveListObjectPool = new DefaultObjectPool<IMoveList>(new MoveListPolicy());
+
+		var sp = new SearchParameters();
+
+		var board = new Board();
+		var values = new Values();
+		var validator = new PositionValidator();
+
+		var pos = new Position(board, values, validator, moveListObjectPool);
+
+		Game = new Game(Table, uci, cpu, sp, pos, moveListObjectPool);
+
+		Search.OnSearchComplete += OnSearchComplete;
+		Search.OnInfo += OnInfo;
     }
 
-	private void HandleUCICommand(string? command)
+	private static void HandleUCICommand(string? command)
 	{
 		if (command == null)
 			return;
@@ -69,11 +96,11 @@ public class Engine
 				//SetOption(tokens);
 				break;
 			case "printpos":
-				Console.WriteLine(game.Pos);
+				Console.WriteLine(ToAscii(Game.Pos));
 				break;
 			case "test":
-				//Console.WriteLine($"Moves:          {engine.game.Moves().Length}");
-				//Console.WriteLine($"Capture Moves:  {engine.game.CaptureMoves().Length}");
+				//Console.WriteLine($"Moves:          {engine.Game.Moves().Length}");
+				//Console.WriteLine($"Capture Moves:  {engine.Game.CaptureMoves().Length}");
 				TestFunction();
 				break;
 			default:
@@ -82,19 +109,19 @@ public class Engine
 		}
 	}
 
-	public async Task Start()
+	public static async Task Start()
     {
         Running = true;
 		await Read();
     }
 
-    public void Stop()
+    public static void Stop()
     {
         controller.Stop();
-		search.CancelSearch();
+		Search.CancelSearch();
     }
 
-    public void Quit()
+    public static void Quit()
     {
 		Task.Delay(1000).ContinueWith((t) =>
 		{
@@ -106,7 +133,7 @@ public class Engine
 		});
     }
 
-	public async Task Read()
+	public static async Task Read()
 	{
 		while (Running)
 		{
@@ -124,9 +151,9 @@ public class Engine
 		}
 	}
 
-	public void ParseUCIGo(string[] tokens)
+	public static void ParseUCIGo(string[] tokens)
     {
-		if (game.Pos.State.Key == 0)
+		if (Game.Pos.State.Key == 0)
 		{
 			Console.WriteLine("Can't start searching because the board isn't set yet!");
 			return;
@@ -158,10 +185,10 @@ public class Engine
 			return;
 		}
 
-		Task.Factory.StartNew(() => search.IterativeDeepeningSearch(), TaskCreationOptions.LongRunning);
+		Task.Factory.StartNew(Search.IterativeDeepeningSearch, TaskCreationOptions.LongRunning);
 	}
 
-	private void LoadPosition(string[] tokens)
+	private static void LoadPosition(string[] tokens)
 	{
 		if (positionLoaded)
 		{
@@ -173,19 +200,19 @@ public class Engine
 		positionLoaded = true;
 
 		//position [fen <fenstring> | startpos ]  moves <move1> .... <movei>
-		if (tokens[1] == "startpos")
+		if (tokens.Length > 1 && tokens[1] == "startpos")
 		{
-			game.NewGame();
+			Game.NewGame();
 		}
-		else if (tokens[1] == "fen") //rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
+		else if (tokens.Length > 1 && tokens[1] == "fen") //rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
 		{
 			string fen = string.Join(' ', tokens[2..8]);
-			game.NewGame(fen);
+			Game.NewGame(fen);
 		}
 		else
 		{
 			Log("'position' parameters missing or not understood. Assuming 'startpos'.");
-			game.NewGame();
+			Game.NewGame();
 		}
 
 		int firstMove = Array.IndexOf(tokens, "moves") + 1;
@@ -198,69 +225,49 @@ public class Engine
 		}
 	}
 
-	private void MakeUCIMove(string uciMove)
+	private static void MakeUCIMove(string uciMove)
 	{
-		Move move = Game.Uci.MoveFromUci(game.Pos, uciMove);
+		Move move = Game.Uci.MoveFromUci(Game.Pos, uciMove);
 
-		if (!move.IsNullMove() && game.Pos.State.LastMove != move)
-			game.Pos.MakeMove(move, game.Pos.State);
+		if (!move.IsNullMove() && Game.Pos.State.LastMove != move)
+			Game.Pos.MakeMove(move, Game.Pos.State);
 
-		if (game.Pos.IsMate)
+		if (Game.Pos.IsMate)
 		{
 			Quit();
 			Log("Checkmate");
 		}
-		else if (game.Pos.IsDraw())
+		else if (Game.Pos.IsDraw())
 		{
 			Quit();
 			Log("Draw");
 		}
 	}
 
-	public void OnSearchComplete(ExtMove extMove)
+	public static void OnSearchComplete(ValMove extMove)
 	{
-		game.Pos.MakeMove(extMove, game.Pos.State);
+		Game.Pos.MakeMove(extMove, Game.Pos.State);
 
 		var bestMove = Game.Uci.MoveToString(extMove.Move);
 		Console.WriteLine("bestmove " + bestMove);
 
-		if (game.Pos.IsMate)
+		if (Game.Pos.IsMate)
 		{
 			Quit();
 			Log("Checkmate");
 		}
-		else if (game.Pos.IsDraw())
+		else if (Game.Pos.IsDraw())
 		{
 			Quit();
 			Log("Draw");
 		}
-
-		Console.WriteLine("Current repetition count: " + RepetitionCount());
-
-		int RepetitionCount()
-		{
-			var counts = new Dictionary<HashKey, int>();
-			int max = 0;
-			foreach (var key in game.Pos.ZobristKeyHistory)
-			{
-				if (counts.ContainsKey(key))
-					counts[key]++;
-				else
-					counts[key] = 1;
-
-				if (counts[key] > max)
-					max = counts[key];
-			}
-			counts.Clear();
-			return max;
-		}
 	}
 
-	private void OnInfo(int depth, int score, long nodes, int timeMs)
+	private static void OnInfo(int depth, int score, long nodes, int timeMs, int hashPerMille)
 	{
 		double tS = Math.Max(1, timeMs) / 1000.0;
 		int nps = (int)(nodes / tS);
-		Console.WriteLine($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs}");
+		Console.WriteLine($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs} hashfull {hashPerMille}");
 	}
 
 	public static void Log(string message)
@@ -347,9 +354,9 @@ public class Engine
 		return $"cp {score}";
 	}
 
-	private void TestFunction()
+	private static void TestFunction()
 	{
-		var moveList = game.Pos.GenerateMoves();
+		var moveList = Game.Pos.GenerateMoves();
 		foreach (var move in moveList.Get())
 			Console.WriteLine(move.Move.ToString());
 	}

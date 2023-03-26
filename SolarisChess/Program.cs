@@ -10,7 +10,6 @@ internal class Program
 	{
 		GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
 
-		Engine engine = new Engine();
-		await engine.Start();
+		await Engine.Start();
 	}
 }
