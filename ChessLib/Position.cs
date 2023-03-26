@@ -695,7 +695,7 @@ public sealed class Position : IPosition
     }
 
     public void MakeMove(Move m, in State newState)
-        => MakeMove(m, newState, GivesCheck(m));
+        => MakeMove(m, in newState, GivesCheck(m));
 
     public void MakeMove(Move m, in State newState, bool givesCheck)
     {
@@ -1536,11 +1536,11 @@ public sealed class Position : IPosition
 
     public bool IsInsufficientMaterial()
     {
-        int pawnCount = Pieces(PieceTypes.Pawn).Count;
-        int knightCount = Pieces(PieceTypes.Knight).Count;
-        int bishopCount = Pieces(PieceTypes.Bishop).Count;
-		int rookCount = Pieces(PieceTypes.Rook).Count;
-		int queenCount = Pieces(PieceTypes.Queen).Count;
+        int pawnCount = PieceCount(PieceTypes.Pawn);
+        int knightCount = PieceCount(PieceTypes.Knight);
+        int bishopCount = PieceCount(PieceTypes.Bishop);
+		int rookCount = PieceCount(PieceTypes.Rook);
+		int queenCount = PieceCount(PieceTypes.Queen);
 
 		// If there are any pawns, rooks, or queens, then there is sufficient material
 		if (pawnCount != 0 || rookCount != 0 || queenCount != 0)

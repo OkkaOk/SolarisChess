@@ -8,6 +8,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.13.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ChessLib\ChessLib.csproj" />
     <ProjectReference Include="..\SolarisChess\SolarisChess.csproj" />
   </ItemGroup>
 

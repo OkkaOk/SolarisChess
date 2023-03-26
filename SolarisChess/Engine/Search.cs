@@ -27,7 +27,7 @@ public class Search
 
 	TranspositionTable Table => Game.Table;
 	MoveOrdering moveOrdering;
-	SearchController controller;
+	TimeControl controller;
 	Evaluation evaluation;
 
 	Stopwatch timer = new Stopwatch();
@@ -42,9 +42,8 @@ public class Search
 	int numQNodes;
 	int numCutoffs;
 	int numTranspositions;
-	int furthestNode;
 
-	public Search(IGame game, SearchController controller)
+	public Search(IGame game, TimeControl controller)
 	{
 		this.game = game;
 		this.controller = controller;
@@ -73,7 +72,7 @@ public class Search
 
 		Task.Factory.StartNew(async () =>
 		{
-			while (controller.CanSearchDeeper(searchDepth, numNodes))
+			while (controller.CanSearchDeeper(searchDepth, numNodes, true))
 			{
 				await Task.Delay(200);
 			}
@@ -104,8 +103,7 @@ public class Search
 
 		if (bestMove == ExtMove.Empty)
 		{
-			var moves = position.GenerateMoves().ToArray();
-			bestMove = moveOrdering.OrderMoves(moves, position)[0];
+			bestMove = GenerateAndOrderMoves()[0];
 			Engine.Log("-------------Had to choose a stupid move-------------");
 		}
 
@@ -114,10 +112,11 @@ public class Search
 		Engine.Log("Total nodes visited: " + numNodes);
 		Engine.Log("Total branches cut off: " + numCutoffs);
 		Engine.Log("Total transpositions: " + numTranspositions);
-		Engine.Log("Current Zobrist: " + position.State.Key.Key);
+		//Engine.Log("Current Zobrist: " + position.State.Key.Key);
 		Engine.Log("Negamax time: " + (negamaxTime - quiescenceTime));
 		Engine.Log("Quiescence time: " + quiescenceTime);
-		if (position.HasGameCycle(position.Ply)) Engine.Log("Apparently there is a cuckoo cycle");
+		Engine.Log("Hash filled: " + Game.Table.Fullness() + "%");
+
 		OnSearchComplete?.Invoke(bestMove);
 	}
 
@@ -134,25 +133,8 @@ public class Search
 			return SearchInvalid;
 
 		var Hash = position.State.Key;
-		
-		if (plyFromRoot > 0)
-		{
-			if (position.IsDraw())
-				return 0;
-
-			// Skip this position if a mating sequence has already been found earlier in
-			// the search, which would be shorter than any mate we could find from here.
-			// This is done by observing that alpha can't possibly be worse (and likewise
-			// beta can't  possibly be better) than being mated in the current position.
-			alpha = Max(alpha, -Evaluation.immediateMateScore + plyFromRoot);
-			beta = Min(beta, Evaluation.immediateMateScore - plyFromRoot);
-			if (alpha >= beta)
-			{
-				return alpha;
-			}
-		}
-
 		int alphaOrig = alpha;
+
 		if (Table.Probe(Hash, out var entry) && entry.Depth >= depth)
 		{
 			numTranspositions++;
@@ -168,6 +150,23 @@ public class Search
 				return entry.StaticValue;
 		}
 
+		if (plyFromRoot > 0)
+		{
+			if (position.IsThreeFoldRepetition() || position.IsInsufficientMaterial())
+				return plyFromRoot;
+
+			// Skip this position if a mating sequence has already been found earlier in
+			// the search, which would be shorter than any mate we could find from here.
+			// This is done by observing that alpha can't possibly be worse (and likewise
+			// beta can't  possibly be better) than being mated in the current position.
+			alpha = Max(alpha, -Evaluation.immediateMateScore + plyFromRoot);
+			beta = Min(beta, Evaluation.immediateMateScore - plyFromRoot);
+			if (alpha >= beta)
+			{
+				return alpha;
+			}
+		}
+
 		if (depth <= 0)
 		{
 			long beginTime = timer.ElapsedMilliseconds;
@@ -177,8 +176,7 @@ public class Search
 			return eval;
 		}
 
-		var moves = position.GenerateMoves(MoveGenerationType.Legal).ToArray();
-		moves = moveOrdering.OrderMoves(moves, position);
+		var moves = GenerateAndOrderMoves();
 
 		if (moves.Length == 0)
 		{
@@ -248,6 +246,10 @@ public class Search
 		if (abortSearch)
 			return SearchInvalid;
 
+		// No need to check for repetition.
+		if (position.IsInsufficientMaterial())
+			return 0;
+
 		// A player isn't forced to make a capture (typically), so see what the evaluation is without capturing anything.
 		// This prevents situations where a player only has bad captures available from being evaluated as bad,
 		// when the player might have good non-capture moves available.
@@ -259,8 +261,7 @@ public class Search
 		if (alpha < eval)
 			alpha = eval;
 
-		var moves = position.GenerateMoves(MoveGenerationType.Legal).ToArray();
-		moves = moveOrdering.OrderMoves(moves, position);
+		var moves = GenerateAndOrderMoves();
 
 		if (moves.Length == 0)
 		{
@@ -274,7 +275,7 @@ public class Search
 
 		foreach (var move in moves)
 		{
-			if (!position.IsCapture(move))
+			if (!position.IsCaptureOrPromotion(move))
 				continue;
 
 			numNodes++;
@@ -309,6 +310,12 @@ public class Search
 		numQNodes = 0;
 		numCutoffs = 0;
 		numTranspositions = 0;
+	}
+
+	ExtMove[] GenerateAndOrderMoves(MoveGenerationType type = MoveGenerationType.Legal)
+	{
+		MoveList moves = position.GenerateMoves(type);
+		return moveOrdering.OrderMoves(moves, position);
 	}
 }
 

@@ -22,7 +22,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\ChessLib\ChessLib.csproj" />
     <ProjectReference Include="..\SolarisChess\SolarisChess.csproj" />
   </ItemGroup>
 

@@ -13,7 +13,7 @@ public class Engine
     public const string name = "SolarisChess 1.0.0";
     public const string author = "Okka";
 
-	public SearchController controller = new SearchController();
+	public TimeControl controller = new TimeControl();
     private Search search;
 
 	private bool positionLoaded;
@@ -56,6 +56,7 @@ public class Engine
 				break;
 			case "ucinewgame":
 				positionLoaded = false;
+				controller.Reset();
 				//Transpositions.Clear();
 				break;
 			case "stop":
@@ -68,7 +69,7 @@ public class Engine
 				//SetOption(tokens);
 				break;
 			case "printpos":
-				Console.WriteLine(ToAscii(game.Pos));
+				Console.WriteLine(game.Pos);
 				break;
 			case "test":
 				//Console.WriteLine($"Moves:          {engine.game.Moves().Length}");
@@ -146,9 +147,10 @@ public class Engine
 		TryParse(tokens, "binc", out int blackIncrement);
 
 		int myTime = WhiteToPlay ? whiteTime : blackTime;
+		int opponentTime = WhiteToPlay ? blackTime : whiteTime;
 		int myIncrement = WhiteToPlay ? whiteIncrement: blackIncrement;
 
-		controller.Initialize(myTime, myIncrement, movesToGo, maxDepth, maxNodes, moveTime);
+		controller.Initialize(myTime, opponentTime, myIncrement, movesToGo, maxDepth, maxNodes, moveTime);
 
 		if (controller.isInfinite && Array.IndexOf(tokens, "infinite") == -1 && maxDepth == 0 && maxNodes == 0)
 		{

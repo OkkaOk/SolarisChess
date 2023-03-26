@@ -1,7 +1,10 @@
-﻿using ChessLib.Factories;
+﻿using ChessLib;
+using ChessLib.Factories;
 using ChessLib.MoveGeneration;
+using ChessLib.ObjectPoolPolicies;
 using ChessLib.Protocol.UCI;
 using ChessLib.Types;
+using Microsoft.Extensions.ObjectPool;
 using SolarisChess;
 using System.Diagnostics;
 using System.Drawing;
@@ -10,9 +13,54 @@ namespace SolarisChessTest;
 
 internal class Program
 {
+	private static readonly ObjectPool<IMoveList> _moveLists = new DefaultObjectPool<IMoveList>(new MoveListPolicy());
+	static IPosition pos;
+
 	static void Main(string[] args)
 	{
+		var game = GameFactory.Create();
+		game.NewGame();
 
+		pos = game.Pos;
+
+		Stopwatch stopwatch = Stopwatch.StartNew();
+		var res = game.Perft(6);
+		//ulong res = PerftTest(6);
+		Console.WriteLine($"Result: {res}. Took {stopwatch.ElapsedMilliseconds}ms");
+	}
+
+	static ulong PerftTest(int depth, bool root = true)
+	{
+		var ml = _moveLists.Get();
+		ml.Generate(in pos, ChessLib.Enums.MoveGenerationType.Quiets);
+		var state = new State();
+
+		var tot = ulong.MinValue;
+
+		foreach (var em in ml.Get())
+			if (root && depth <= 1)
+				tot++;
+			else
+			{
+				var m = em.Move;
+				pos.MakeMove(m, in state);
+
+				if (depth <= 2)
+				{
+					var ml2 = _moveLists.Get();
+					ml2.Generate(in pos, ChessLib.Enums.MoveGenerationType.Quiets);
+					tot += (ulong)ml2.Length;
+					_moveLists.Return(ml2);
+				}
+				else
+					tot += PerftTest(depth - 1, false);
+
+				pos.TakeMove(m);
+			}
+
+		_moveLists.Return(ml);
+
+		return tot;
 	}
 
 	static void MoveGenerationSpeedTest()

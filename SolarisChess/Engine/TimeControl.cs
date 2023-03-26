@@ -1,16 +1,19 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using static System.Math;
 
 namespace SolarisChess;
 
-public class SearchController
+public class TimeControl
 {
 	public static readonly int TIME_MARGIN = 20;
 	public static readonly int BRANCHING_FACTOR_ESTIMATE = 3;
     public static readonly int MAX_TIME_REMAINING = int.MaxValue / 3; //large but not too large to cause overflow issues
 
+    private int startTime;
     private int remaining;
+    private int opponentRemaining;
     private int increment;
     private int movesToGo;
     private int searchDepth;
@@ -37,10 +40,16 @@ public class SearchController
 
             if (remaining != 0)
             {
-                if (movesToGo != 0)
-			        return (int)(Math.Pow(TimeRemaining, 1.2f) / (5 * movesToGo)) - TIME_MARGIN;
+                // Add some of the time lead to the available time
+                int lead = (int)(Max(0, Abs(remaining) - Abs(opponentRemaining)) * 0.2f);
 
-                return (int)(Math.Pow(TimeRemaining, 1.2f) / 200);
+                if (movesToGo != 0)
+			        return remaining / movesToGo - TIME_MARGIN + lead;
+
+                float percentage = Max(0.3f, TimeRemaining / startTime);
+				float divisor = 400 * percentage;
+
+				return (int)(Pow(TimeRemaining, 1.2f) / divisor) + lead;
 			}
 
             return MAX_TIME_REMAINING;
@@ -53,11 +62,16 @@ public class SearchController
         return (int)(1000 * dt);
     }
 
-    private void Reset()
+    public void Reset()
     {
-        movesToGo = 1;
-        increment = 0;
+        startTime = 0;
         remaining = MAX_TIME_REMAINING;
+        opponentRemaining = MAX_TIME_REMAINING;
+        increment = 0;
+        movesToGo = 1;
+        searchDepth = 0;
+        maxNodes = 0;
+        moveTime = 0;
         t0 = Now;
         tN = t0;
     }
@@ -74,11 +88,15 @@ public class SearchController
         remaining = 0;
     }
 
-    public void Initialize(int remaining, int increment, int movesToGo, int searchDepth, long maxNodes, int moveTime)
+    public void Initialize(int remaining, int opponentRemaining, int increment, int movesToGo, int searchDepth, long maxNodes, int moveTime)
     {
+        if (startTime == 0)
+            startTime = remaining;
+
 		t0 = Now;
         tN = Now;
-		this.remaining = remaining;
+		this.remaining = Max(remaining, 0);
+		this.opponentRemaining = Max(opponentRemaining, 0);
 		this.increment = increment;
 		this.movesToGo = movesToGo;
         this.searchDepth = searchDepth;
@@ -88,7 +106,7 @@ public class SearchController
         isInfinite = remaining == 0 && increment == 0 && movesToGo == 0 && moveTime == 0;
 	}
 
-    public bool CanSearchDeeper(int currentDepth, long currentNodeCount)
+    public bool CanSearchDeeper(int currentDepth, long currentNodeCount, bool alreadySearching = false)
     {
         if (isInfinite)
         {
@@ -103,27 +121,35 @@ public class SearchController
 
         int elapsed = Elapsed;
 
-        int estimate = elapsed + ElapsedInterval * BRANCHING_FACTOR_ESTIMATE;
-
-        //no increment... we need to stay within the per-move time budget
-        if (increment == 0 && estimate > AllocatedTimePerMove)
-            return false;
-
         //we have already exceeded the average move
         if (elapsed > AllocatedTimePerMove)
             return false;
 
-        //shouldn't spend more then the 2x the average on a move
-        if (estimate > 2 * AllocatedTimePerMove)
-            return false;
-
-        //can't afford the estimate
-        if (estimate > TimeRemaining)
+        if (!HasTimeForNextDepth() && !alreadySearching)
             return false;
 
         //all conditions fulfilled
         return true;
     }
+
+    bool HasTimeForNextDepth()
+    {
+		int estimate = Elapsed + ElapsedInterval * BRANCHING_FACTOR_ESTIMATE;
+
+		//no increment... we need to stay within the per-move time budget
+		if (increment == 0 && estimate > AllocatedTimePerMove)
+			return false;
+
+		//shouldn't spend more then the 2x the average on a move
+		if (estimate > 2 * AllocatedTimePerMove)
+			return false;
+
+		//can't afford the estimate
+		if (estimate > TimeRemaining)
+			return false;
+
+        return true;
+	}
 
     public bool CheckTimeBudget()
     {

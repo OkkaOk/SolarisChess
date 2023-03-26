@@ -27,6 +27,11 @@ public class Evaluation
 	const int QueenPhase = 4;
 	const int TotalPhase = KnightPhase * 4 + BishopPhase * 4 + RookPhase * 4 + QueenPhase * 2;
 
+	/// <summary>
+	/// (Start) 0 - 1 (Endgame)
+	/// </summary>
+	float phase = 0;
+
 	IPosition position;
 
 	public Evaluation(IPosition position)
@@ -40,14 +45,11 @@ public class Evaluation
 	// So a positive score means the player who's turn it is to move has an advantage, while a negative score indicates a disadvantage.
 	public int Evaluate()
 	{
-		if (position.IsDraw())
-			return 0;
-
 		int eval = 0;
 		int whiteEval = 0;
 		int blackEval = 0;
 
-		float phase = CalculatePhase();
+		phase = CalculatePhase();
 
 		//if (KpkBitBase.IsDraw(position)) // TODO ?
 		//	return 0;
@@ -55,11 +57,11 @@ public class Evaluation
 		CountMaterial(out int whiteMaterial, out int blackMaterial, out int whiteMaterialNoPawns, out int blackMaterialNoPawns);
 
 		eval += whiteMaterial - blackMaterial;
-		eval += EvaluatePieceSquareTables(phase);
+		eval += EvaluatePieceSquareTables();
 		eval += CalculateMobilityScore();
 
 		Player leadingSide = whiteEval > blackEval ? Player.White : Player.Black;
-		MopUpEval(leadingSide, phase, ref eval);
+		MopUpEval(leadingSide, ref eval);
 
 		int perspective = position.SideToMove.IsWhite ? 1 : -1;
 		return eval * perspective;
@@ -95,27 +97,29 @@ public class Evaluation
 
 	void CountMaterial(out int whiteMaterial, out int blackMaterial, out int whiteMaterialNoPawns, out int blackMaterialNoPawns)
 	{
-		whiteMaterial = blackMaterial = whiteMaterialNoPawns = blackMaterialNoPawns = 0;
+		var whitePawnCount = position.PieceCount(PieceTypes.Pawn, Player.White);
+		var whiteKnightCount = position.PieceCount(PieceTypes.Knight, Player.White);
+		var whiteBishopCount = position.PieceCount(PieceTypes.Bishop, Player.White);
+		var whiteRookCount = position.PieceCount(PieceTypes.Rook, Player.White);
+		var whiteQueenCount = position.PieceCount(PieceTypes.Queen, Player.White);
 
-		for (short squareIndex = 0; squareIndex < 64; squareIndex++)
-		{
-			var piece = position.GetPiece(squareIndex);
+		whiteMaterialNoPawns = whiteKnightCount * knightValue +
+								whiteBishopCount * bishopValue +
+								whiteRookCount * rookValue +
+								whiteQueenCount * queenValue;
+		whiteMaterial = whiteMaterialNoPawns + whitePawnCount * pawnValue;
 
-			int value = GetPieceValue(piece.Type());
+		var blackPawnCount = position.PieceCount(PieceTypes.Pawn, Player.Black);
+		var blackKnightCount = position.PieceCount(PieceTypes.Knight, Player.Black);
+		var blackBishopCount = position.PieceCount(PieceTypes.Bishop, Player.Black);
+		var blackRookCount = position.PieceCount(PieceTypes.Rook, Player.Black);
+		var blackQueenCount = position.PieceCount(PieceTypes.Queen, Player.Black);
 
-			if (piece.IsWhite)
-			{
-				whiteMaterial += value;
-				if (piece.Type() != PieceTypes.Pawn)
-					whiteMaterialNoPawns += value;
-			}
-			else
-			{
-				blackMaterial += value;
-				if (piece.Type() != PieceTypes.Pawn)
-					blackMaterialNoPawns += value;
-			}
-		}
+		blackMaterialNoPawns = blackKnightCount * knightValue +
+								blackBishopCount * bishopValue +
+								blackRookCount * rookValue +
+								blackQueenCount * queenValue;
+		blackMaterial = blackMaterialNoPawns + blackPawnCount * pawnValue;
 	}
 
 	private int CalculateMobilityScore()
@@ -124,9 +128,14 @@ public class Evaluation
 		{
 			int mobilityScore = 0;
 
-			var attacks = position.AttacksBy(PieceTypes.AllPieces, side);
-			foreach (var attackSquare in attacks)
+			var attacks =	position.AttacksBy(PieceTypes.Pawn, side)	|
+							position.AttacksBy(PieceTypes.Knight, side) |
+							position.AttacksBy(PieceTypes.Bishop, side) |
+							position.AttacksBy(PieceTypes.Rook, side)	|
+							position.AttacksBy(PieceTypes.Queen, side);
+			while (attacks)
 			{
+				var attackSquare = BitBoards.PopLsb(ref attacks);
 				mobilityScore += 1;
 
 				if (position.AttackedByPawn(attackSquare, ~side))
@@ -141,7 +150,7 @@ public class Evaluation
 		return GetScore(Player.White) - GetScore(Player.Black);
 	}
 
-	void MopUpEval(Player winningSide, float endgameWeight, ref int eval)
+	void MopUpEval(Player winningSide, ref int eval)
 	{
 		if (Abs(eval) < 2)
 			return;
@@ -159,42 +168,100 @@ public class Evaluation
 		// Try to get as close as possible to the opponent king
 		mopUpScore += (14 - md) * 4;
 
-		eval += (int)(endgameWeight * mopUpScore);
+		eval += (int)(phase * mopUpScore);
 	}
 
-	int EvaluatePieceSquareTables(float phase)
-	{
-		int GetScore(Player side)
-		{
-			int value = 0;
-			bool isWhite = side == Player.White;
-
-			value += EvaluatePieceSquareTable(PieceSquareTable.pawns, position.Pieces(PieceTypes.Pawn, side), isWhite);
-			value += EvaluatePieceSquareTable(PieceSquareTable.rooks, position.Pieces(PieceTypes.Rook, side), isWhite);
-			value += EvaluatePieceSquareTable(PieceSquareTable.knights, position.Pieces(PieceTypes.Knight, side), isWhite);
-			value += EvaluatePieceSquareTable(PieceSquareTable.bishops, position.Pieces(PieceTypes.Bishop, side), isWhite);
-			value += EvaluatePieceSquareTable(PieceSquareTable.queens, position.Pieces(PieceTypes.Queen, side), isWhite);
-
-			int kingEarlyPhase = PieceSquareTable.Read(PieceSquareTable.kingMiddle, position.GetKingSquare(side), isWhite);
-			value += (int)(kingEarlyPhase * (1 - phase));
-
-			int kingLateGame = PieceSquareTable.Read(PieceSquareTable.kingEnd, position.GetKingSquare(side), isWhite);
-			value += (int)(kingLateGame * phase);
-
-			return value;
-		}
-
-		return GetScore(Player.White) - GetScore(Player.Black);
-	}
-
-	static int EvaluatePieceSquareTable(int[] table, BitBoard squares, bool isWhite)
+	int EvaluatePieceSquareTables()
 	{
 		int value = 0;
-		foreach (var square in squares)
+		var pieces = position.Pieces();
+
+		while (pieces)
 		{
-			value += PieceSquareTable.Read(table, square, isWhite);
+			var sq = BitBoards.PopLsb(ref pieces);
+
+			var piece = position.GetPiece(sq);
+			bool isWhite = piece.IsWhite;
+			int perspective = isWhite ? 1 : -1;
+
+			GetPieceSquareTable(piece.Type(), out int[] middleTable, out int[] endTable);
+			value += (int)(PieceSquareTable.Read(middleTable, sq, isWhite) * (1 - phase)) * perspective;
+			value += (int)(PieceSquareTable.Read(endTable, sq, isWhite) * phase) * perspective;
 		}
+
 		return value;
+	}
+
+	//int EvaluatePieceSquareTables()
+	//{
+	//	int GetScore(Player side)
+	//	{
+	//		int value = 0;
+	//		bool isWhite = side == Player.White;
+
+	//		value += EvaluatePieceSquareTable(PieceSquareTable.pawnMiddle, position.Pieces(PieceTypes.Pawn, side), isWhite);
+	//		value += EvaluatePieceSquareTable(PieceSquareTable.rookMiddle, position.Pieces(PieceTypes.Rook, side), isWhite);
+	//		value += EvaluatePieceSquareTable(PieceSquareTable.knightMiddle, position.Pieces(PieceTypes.Knight, side), isWhite);
+	//		value += EvaluatePieceSquareTable(PieceSquareTable.bishopMiddle, position.Pieces(PieceTypes.Bishop, side), isWhite);
+	//		value += EvaluatePieceSquareTable(PieceSquareTable.queenMiddle, position.Pieces(PieceTypes.Queen, side), isWhite);
+
+	//		int kingEarlyPhase = PieceSquareTable.Read(PieceSquareTable.kingMiddle, position.GetKingSquare(side), isWhite);
+	//		value += (int)(kingEarlyPhase * (1 - phase));
+
+	//		int kingLateGame = PieceSquareTable.Read(PieceSquareTable.kingEnd, position.GetKingSquare(side), isWhite);
+	//		value += (int)(kingLateGame * phase);
+
+	//		return value;
+	//	}
+
+	//	return GetScore(Player.White) - GetScore(Player.Black);
+	//}
+
+	//static int EvaluatePieceSquareTable(int[] table, BitBoard squares, bool isWhite)
+	//{
+	//	int value = 0;
+	//	while (squares)
+	//	{
+	//		var square = BitBoards.PopLsb(ref squares);
+
+	//		value += PieceSquareTable.Read(table, square, isWhite);
+	//	}
+	//	return value;
+	//}
+
+	void GetPieceSquareTable(PieceTypes pieceType, out int[] middleTable, out int[] endTable)
+	{
+		switch (pieceType)
+		{
+			case PieceTypes.Pawn:
+				middleTable = PieceSquareTable.pawnMiddle;
+				endTable = PieceSquareTable.pawnEnd;
+				break;
+			case PieceTypes.Knight:
+				middleTable = PieceSquareTable.knightMiddle;
+				endTable = PieceSquareTable.knightEnd;
+				break;
+			case PieceTypes.Bishop:
+				middleTable = PieceSquareTable.bishopMiddle;
+				endTable = PieceSquareTable.bishopEnd;
+				break;
+			case PieceTypes.Rook:
+				middleTable = PieceSquareTable.rookMiddle;
+				endTable = PieceSquareTable.rookEnd;
+				break;
+			case PieceTypes.Queen:
+				middleTable = PieceSquareTable.queenMiddle;
+				endTable = PieceSquareTable.queenEnd;
+				break;
+			case PieceTypes.King:
+				middleTable = PieceSquareTable.kingMiddle;
+				endTable = PieceSquareTable.kingEnd;
+				break;
+			default:
+				middleTable = new int[64];
+				endTable = new int[64];
+				break;
+		}
 	}
 
 	public static int GetPieceValue(PieceTypes pieceType)

@@ -13,7 +13,7 @@ public class MoveOrdering
 
 	}
 
-	public ExtMove[] OrderMoves(ExtMove[] moves, IPosition position)
+	public ExtMove[] OrderMoves(MoveList moves, IPosition position)
 	{
 		Game.Table.Probe(position.State.Key, out TranspositionTableEntry entry);
 
@@ -21,32 +21,34 @@ public class MoveOrdering
 		{
 			int moveScoreGuess = 0;
 
-			var movePieceType = position.GetPiece(extMove.Move.FromSquare()).Type();
-			var capturePieceType = position.GetPiece(extMove.Move.ToSquare()).Type();
+			var (from, to, type) = extMove.Move;
+
+			var movePieceType = position.GetPiece(from).Type();
+			var capturePieceType = position.GetPiece(to).Type();
 
 			if (entry.Move.Equals(extMove.Move))
 			{
 				Console.WriteLine("Found move in tt and using it to order moves");
-				moveScoreGuess += 10000;
+				return 1000000;
 			}
 
 			if (position.IsCapture(extMove))
 				moveScoreGuess += 10 * Evaluation.GetPieceValue(capturePieceType) - Evaluation.GetPieceValue(movePieceType);
 
-			if (position.GivesCheck(extMove))
-				moveScoreGuess += Evaluation.pawnValue;
+			//if (position.GivesCheck(extMove))
+			//	moveScoreGuess += Evaluation.pawnValue;
 
-			if (extMove.Move.IsPromotionMove())
+			if (type == MoveTypes.Promotion)
 			{
 				var promotionType = extMove.Move.PromotedPieceType();
-				moveScoreGuess += Evaluation.GetPieceValue(promotionType);
+				moveScoreGuess += Evaluation.GetPieceValue(promotionType) * 2;
 			}
 
 			// If the target square is attacked by opponent pawn
-			if (position.AttackedByPawn(extMove.Move.ToSquare(), ~position.SideToMove))
-			{
-				moveScoreGuess -= Evaluation.GetPieceValue(movePieceType) + Evaluation.pawnValue;
-			}
+			//if (position.AttackedByPawn(to, ~position.SideToMove))
+			//{
+			//	moveScoreGuess -= Evaluation.GetPieceValue(movePieceType) + Evaluation.pawnValue;
+			//}
 
 			return moveScoreGuess;
 		}).ToArray();
