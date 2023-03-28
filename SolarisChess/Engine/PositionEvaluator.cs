@@ -8,7 +8,7 @@ using static System.Math;
 
 namespace SolarisChess;
 
-public class Evaluation
+public class PositionEvaluator
 {
 	public const int pawnValue = 100;
 	public const int knightValue = 325;

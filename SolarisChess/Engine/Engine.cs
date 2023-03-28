@@ -22,10 +22,10 @@ public static class Engine
 
 	public static TimeControl controller = new TimeControl();
 
-	private static bool positionLoaded;
-
     public static Game Game;
 	public static TranspositionTable Table;
+	public static Stack<ulong> positionHistory = new();
+	public static Search search;
 
 	public static bool Running { get; private set; }
     public static bool WhiteToPlay => Game.CurrentPlayer().IsWhite;
@@ -53,9 +53,10 @@ public static class Engine
 
 		Game = new Game(Table, uci, cpu, sp, pos, moveListObjectPool);
 
-		Search.OnSearchComplete += OnSearchComplete;
-		Search.OnInfo += OnInfo;
-    }
+		search = new Search();
+		search.OnSearchComplete += OnSearchComplete;
+		search.OnInfo += OnInfo;
+	}
 
 	private static void HandleUCICommand(string? command)
 	{
@@ -82,7 +83,6 @@ public static class Engine
 				ParseUCIGo(tokens);
 				break;
 			case "ucinewgame":
-				positionLoaded = false;
 				controller.Reset();
 				//Transpositions.Clear();
 				break;
@@ -118,7 +118,7 @@ public static class Engine
     public static void Stop()
     {
         controller.Stop();
-		Search.CancelSearch();
+		search.CancelSearch();
     }
 
     public static void Quit()
@@ -155,8 +155,8 @@ public static class Engine
     {
 		if (Game.Pos.State.Key == 0)
 		{
-			Console.WriteLine("Can't start searching because the board isn't set yet!");
-			return;
+			Console.WriteLine("Set the board to starting position.");
+			Game.NewGame();
 		}
 
 		//Searching on a budget that may increase at certain intervals
@@ -185,20 +185,14 @@ public static class Engine
 			return;
 		}
 
-		Task.Factory.StartNew(Search.IterativeDeepeningSearch, TaskCreationOptions.LongRunning);
+		Task.Factory.StartNew(search.IterativeDeepeningSearch, TaskCreationOptions.LongRunning);
+
+		//var move = negascout.FindBestMoveWithIterativeDeepening(Game.Pos);
+		//Console.WriteLine(Game.Uci.MoveToString(move));
 	}
 
 	private static void LoadPosition(string[] tokens)
 	{
-		if (positionLoaded)
-		{
-			//MakeUCIMove(tokens[tokens.Length - 2]);
-			MakeUCIMove(tokens[tokens.Length - 1]);
-			return;
-		}
-
-		positionLoaded = true;
-
 		//position [fen <fenstring> | startpos ]  moves <move1> .... <movei>
 		if (tokens.Length > 1 && tokens[1] == "startpos")
 		{
@@ -229,45 +223,33 @@ public static class Engine
 	{
 		Move move = Game.Uci.MoveFromUci(Game.Pos, uciMove);
 
-		if (!move.IsNullMove() && Game.Pos.State.LastMove != move)
-			Game.Pos.MakeMove(move, Game.Pos.State);
-
-		if (Game.Pos.IsMate)
-		{
-			Quit();
-			Log("Checkmate");
-		}
-		else if (Game.Pos.IsDraw())
-		{
-			Quit();
-			Log("Draw");
-		}
+		positionHistory.Push(Game.Pos.State.Key.Key);
+		Game.Pos.MakeMove(move, new());
 	}
 
 	public static void OnSearchComplete(ValMove extMove)
 	{
-		Game.Pos.MakeMove(extMove, Game.Pos.State);
+		//Game.Pos.MakeMove(extMove, Game.Pos.State);
 
 		var bestMove = Game.Uci.MoveToString(extMove.Move);
 		Console.WriteLine("bestmove " + bestMove);
-
-		if (Game.Pos.IsMate)
-		{
-			Quit();
-			Log("Checkmate");
-		}
-		else if (Game.Pos.IsDraw())
-		{
-			Quit();
-			Log("Draw");
-		}
 	}
 
-	private static void OnInfo(int depth, int score, long nodes, int timeMs, int hashPerMille)
+	public static void OnInfo(int depth, int score, long nodes, int timeMs, int hashPerMille, ValMove[] pvLine)
 	{
 		double tS = Math.Max(1, timeMs) / 1000.0;
 		int nps = (int)(nodes / tS);
-		Console.WriteLine($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs} hashfull {hashPerMille}");
+		StringBuilder sb = new();
+		sb.Append($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs} hashfull {hashPerMille} multipv 1");
+
+		foreach (var move in pvLine)
+		{
+			if (move.Move.IsNullMove())
+				continue;
+			sb.Append(" " + move.Move);
+		}
+
+		Console.WriteLine(sb);
 	}
 
 	public static void Log(string message)
@@ -344,10 +326,10 @@ public static class Engine
 
 	private static string ScoreToString(int score)
 	{
-		if (Evaluation.IsMateScore(score))
+		if (PositionEvaluator.IsMateScore(score))
 		{
 			int sign = Math.Sign(score);
-			int moves = Evaluation.NumMovesToMateFromScore(score);
+			int moves = PositionEvaluator.NumMovesToMateFromScore(score);
 			return $"mate {sign * moves}";
 		}
 

@@ -18,7 +18,7 @@ public static class PositionExtensions
 		if (position.State.Rule50 > 99 && position.State.Checkers.IsEmpty)
 			return true;
 
-		if (MoveFactory.GenerateMoves(position, MoveGenerationType.Legal).Length == 0 && !position.InCheck)
+		if (position.GenerateMoves(MoveGenerationType.Legal).Length == 0 && !position.InCheck)
 			return true;
 
 		if (position.IsThreeFoldRepetition())
@@ -30,20 +30,26 @@ public static class PositionExtensions
 		return false;
 	}
 
+	//public static void MakeMove(this IPosition position, Move move, State state)
+	//{
+	//	Engine.positionHistory.Push(position.State.Key.Key);
+	//	position.MakeMove(move, in state);
+	//}
+
 	public static bool IsThreeFoldRepetition(this IPosition position)
 	{
-		//var counts = new Dictionary<HashKey, int>();
-		//foreach (var key in ZobristKeyHistory)
-		//{
-		//	if (counts.ContainsKey(key))
-		//		counts[key]++;
-		//	else
-		//		counts[key] = 1;
+		var counts = new Dictionary<HashKey, int>();
+		foreach (var key in Engine.positionHistory)
+		{
+			if (counts.ContainsKey(key))
+				counts[key]++;
+			else
+				counts[key] = 1;
 
-		//	if (counts[key] >= 3)
-		//		return true;
-		//}
-		//counts.Clear();
+			if (counts[key] >= 3)
+				return true;
+		}
+		counts.Clear();
 		return false;
 	}
 
@@ -73,27 +79,33 @@ public static class PositionExtensions
 		if (knightCount == 0 && whiteBishopSquares.Length == 1 && blackBishopSquares.Length == 1)
 			return true;
 
-		// If all of white's bishops are on the same color, then it's insufficient material
-		bool wbFirstDark = whiteBishopSquares[0].IsDark;
-		bool wFoundDifferent = false;
-		foreach (var wbSquare in whiteBishopSquares)
+		if (whiteBishopSquares.Length > 0)
 		{
-			wFoundDifferent = wbSquare.IsDark != wbFirstDark;
+			// If all of white's bishops are on the same color, then it's insufficient material
+			bool wbFirstDark = whiteBishopSquares[0].IsDark;
+			bool wFoundDifferent = false;
+			foreach (var wbSquare in whiteBishopSquares)
+			{
+				wFoundDifferent = wbSquare.IsDark != wbFirstDark;
+			}
+
+			if (!wFoundDifferent)
+				return true;
 		}
 
-		if (!wFoundDifferent)
-			return true;
-
-		// If all of black's bishops are on the same color, then it's insufficient material
-		bool bbFirstDark = blackBishopSquares[0].IsDark;
-		bool bFoundDifferent = false;
-		foreach (var bbSquare in whiteBishopSquares)
+		if (blackBishopSquares.Length > 0)
 		{
-			bFoundDifferent = bbSquare.IsDark != bbFirstDark;
-		}
+			// If all of black's bishops are on the same color, then it's insufficient material
+			bool bbFirstDark = blackBishopSquares[0].IsDark;
+			bool bFoundDifferent = false;
+			foreach (var bbSquare in whiteBishopSquares)
+			{
+				bFoundDifferent = bbSquare.IsDark != bbFirstDark;
+			}
 
-		if (!bFoundDifferent)
-			return true;
+			if (!bFoundDifferent)
+				return true;
+		}
 
 		return false;
 	}
