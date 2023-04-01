@@ -12,27 +12,27 @@ using Rudzoft.ChessLib.Hash.Tables.Transposition;
 using Rudzoft.ChessLib.ObjectPoolPolicies;
 using Rudzoft.ChessLib.Validation;
 using SolarisChess.Extensions;
+using Rudzoft.ChessLib.Polyglot;
 
 namespace SolarisChess;
 
 public static class Engine
 {
-    public const string name = "SolarisChess 1.0.0";
+    public const string name = "SolarisChess 1.1";
     public const string author = "Okka";
 
 	public static TimeControl controller = new TimeControl();
 
-    public static Game Game;
-	public static TranspositionTable Table;
-	public static Stack<ulong> positionHistory = new();
-	public static Search search;
+    public readonly static Game Game;
+	public readonly static TranspositionTable Table;
+	public readonly static Search search;
 
 	public static bool Running { get; private set; }
     public static bool WhiteToPlay => Game.CurrentPlayer().IsWhite;
 
     static Engine()
     {
-		var ttConfig = new TranspositionTableConfiguration { DefaultSize = 1 };
+		var ttConfig = new TranspositionTableConfiguration { DefaultSize = 32 };
 		var options = Options.Create(ttConfig);
 		Table = new TranspositionTable(options);
 
@@ -55,7 +55,6 @@ public static class Engine
 
 		search = new Search();
 		search.OnSearchComplete += OnSearchComplete;
-		search.OnInfo += OnInfo;
 	}
 
 	private static void HandleUCICommand(string? command)
@@ -71,6 +70,7 @@ public static class Engine
 				Console.WriteLine($"id name {name}");
 				Console.WriteLine($"id author {author}");
 				Console.WriteLine("option name Hash type spin default 32 max 2048");
+				Console.WriteLine("option name OwnBook type check default false");
 				Console.WriteLine(Game.Uci.UciOk());
 				break;
 			case "isready":
@@ -84,6 +84,7 @@ public static class Engine
 				break;
 			case "ucinewgame":
 				controller.Reset();
+				Table.Clear();
 				//Transpositions.Clear();
 				break;
 			case "stop":
@@ -93,7 +94,7 @@ public static class Engine
 				Quit();
 				break;
 			case "setoption":
-				//SetOption(tokens);
+				SetOption(tokens);
 				break;
 			case "printpos":
 				Console.WriteLine(ToAscii(Game.Pos));
@@ -156,6 +157,7 @@ public static class Engine
 		if (Game.Pos.State.Key == 0)
 		{
 			Console.WriteLine("Set the board to starting position.");
+			//Game.NewGame("8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w - - 0 1");
 			Game.NewGame();
 		}
 
@@ -179,16 +181,14 @@ public static class Engine
 
 		controller.Initialize(myTime, opponentTime, myIncrement, movesToGo, maxDepth, maxNodes, moveTime);
 
-		if (controller.isInfinite && Array.IndexOf(tokens, "infinite") == -1 && maxDepth == 0 && maxNodes == 0)
+		if (controller.IsInfinite && Array.IndexOf(tokens, "infinite") == -1 && maxDepth == 0 && maxNodes == 0)
 		{
 			Console.WriteLine("Invalid 'go' parameters!");
 			return;
 		}
 
-		Task.Factory.StartNew(search.IterativeDeepeningSearch, TaskCreationOptions.LongRunning);
-
-		//var move = negascout.FindBestMoveWithIterativeDeepening(Game.Pos);
-		//Console.WriteLine(Game.Uci.MoveToString(move));
+		Task.Factory.StartNew(() => search.IterativeDeepeningSearch(Game.Pos), TaskCreationOptions.LongRunning);
+		//search.IterativeDeepeningSearch(Game.Pos);
 	}
 
 	private static void LoadPosition(string[] tokens)
@@ -219,19 +219,26 @@ public static class Engine
 		}
 	}
 
+	private static void SetOption(string[] tokens)
+	{
+		var nameIndex = Array.IndexOf(tokens, "name") + 1;
+		var name = tokens[nameIndex];
+		var valueIndex = Array.IndexOf(tokens, "value") + 1;
+		var value = tokens[valueIndex];
+	}
+
 	private static void MakeUCIMove(string uciMove)
 	{
 		Move move = Game.Uci.MoveFromUci(Game.Pos, uciMove);
 
-		positionHistory.Push(Game.Pos.State.Key.Key);
 		Game.Pos.MakeMove(move, new());
 	}
 
-	public static void OnSearchComplete(ValMove extMove)
+	public static void OnSearchComplete(Move move)
 	{
 		//Game.Pos.MakeMove(extMove, Game.Pos.State);
 
-		var bestMove = Game.Uci.MoveToString(extMove.Move);
+		var bestMove = Game.Uci.MoveToString(move);
 		Console.WriteLine("bestmove " + bestMove);
 	}
 
@@ -240,14 +247,15 @@ public static class Engine
 		double tS = Math.Max(1, timeMs) / 1000.0;
 		int nps = (int)(nodes / tS);
 		StringBuilder sb = new();
-		sb.Append($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs} hashfull {hashPerMille} multipv 1");
+		//sb.Append($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs} hashfull {hashPerMille} multipv 1 pv");
+		sb.Append($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs} hashfull {hashPerMille}");
 
-		foreach (var move in pvLine)
-		{
-			if (move.Move.IsNullMove())
-				continue;
-			sb.Append(" " + move.Move);
-		}
+		//foreach (var move in pvLine)
+		//{
+		//	if (move.Move.IsNullMove())
+		//		break;
+		//	sb.Append(" " + move.Move);
+		//}
 
 		Console.WriteLine(sb);
 	}

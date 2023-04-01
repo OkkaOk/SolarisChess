@@ -1,30 +1,32 @@
-﻿using Rudzoft.ChessLib;
+﻿using Microsoft.Extensions.ObjectPool;
+using Rudzoft.ChessLib;
 using Rudzoft.ChessLib.Enums;
 using Rudzoft.ChessLib.MoveGeneration;
+using Rudzoft.ChessLib.ObjectPoolPolicies;
 using Rudzoft.ChessLib.Types;
+using Rudzoft.ChessLib.Validation;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-//namespace Rudzoft.ChessLib;
 namespace SolarisChess.Extensions;
 
 public static class PositionExtensions
 {
-	public static bool IsDraw(this IPosition position)
+	public static bool IsDraw(this IPosition position, bool disableStalemate = false, bool disableRepetition = false, bool disableMaterial = false)
 	{
 		if (position.State.Rule50 > 99 && position.State.Checkers.IsEmpty)
 			return true;
 
-		if (position.GenerateMoves(MoveGenerationType.Legal).Length == 0 && !position.InCheck)
+		if (!disableStalemate && !position.InCheck && position.GenerateMoves(MoveGenerationType.Legal).Length == 0)
 			return true;
 
-		if (position.IsThreeFoldRepetition())
+		if (!disableRepetition && position.IsThreeFoldRepetition())
 			return true;
 
-		if (position.IsInsufficientMaterial())
+		if (!disableMaterial && position.IsInsufficientMaterial())
 			return true;
 
 		return false;
@@ -36,20 +38,38 @@ public static class PositionExtensions
 	//	position.MakeMove(move, in state);
 	//}
 
+	//public static bool IsThreeFoldRepetition(this IPosition position)
+	//{
+	//	return position.positionHistory.Values.Contains(3);
+	//}
+
 	public static bool IsThreeFoldRepetition(this IPosition position)
 	{
-		var counts = new Dictionary<HashKey, int>();
-		foreach (var key in Engine.positionHistory)
-		{
-			if (counts.ContainsKey(key))
-				counts[key]++;
-			else
-				counts[key] = 1;
+		var state = position.State;
+		Dictionary<ulong, int> keyCount = new();
 
-			if (counts[key] >= 3)
-				return true;
+		for (var i = 0; i < position.Ply; i++)
+		{
+			if (state == null)
+				break;
+
+			if (keyCount.ContainsKey(state.Key.Key))
+			{
+				keyCount.TryGetValue(state.Key.Key, out int count);
+				if (count >= 2)
+					return true;
+
+				keyCount.Remove(state.Key.Key);
+				keyCount.Add(state.Key.Key, count + 1);
+			}
+			else
+			{
+				keyCount.Add(state.Key.Key, 1);
+			}
+
+			state = state.Previous;
 		}
-		counts.Clear();
+
 		return false;
 	}
 

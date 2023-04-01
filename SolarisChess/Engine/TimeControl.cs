@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Rudzoft.ChessLib.Extensions;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using static System.Math;
@@ -10,6 +11,7 @@ public class TimeControl
 	public static readonly int TIME_MARGIN = 20;
 	public static readonly int BRANCHING_FACTOR_ESTIMATE = 3;
     public static readonly int MAX_TIME_REMAINING = int.MaxValue / 3; //large but not too large to cause overflow issues
+    public static readonly int MIN_MOVE_TIME = 200;
 
     private int startTime;
     private int remaining;
@@ -19,13 +21,13 @@ public class TimeControl
     private int searchDepth;
     private long maxNodes;
     private int moveTime;
-    public bool isInfinite { get; private set; }
+    public bool IsInfinite { get; private set; }
 
     private long t0 = -1;
     private long tN = -1;
 
 	//public int AllocatedTimePerMove => TimeRemaining / movesToGo - TIME_MARGIN;
-	private int TimeRemaining => remaining - TIME_MARGIN;
+	private int TimeRemaining => moveTime == 0 ? remaining - TIME_MARGIN : moveTime;
 
     private long Now => Stopwatch.GetTimestamp();
     public int Elapsed => MilliSeconds(Now - t0);
@@ -38,7 +40,7 @@ public class TimeControl
             if (moveTime != 0)
                 return moveTime - TIME_MARGIN;
 
-            if (remaining != 0)
+            if (startTime != 0)
             {
                 // Add some of the time lead to the available time
                 int lead = (int)(Max(0, Abs(remaining) - Abs(opponentRemaining)) * 0.2f);
@@ -46,17 +48,21 @@ public class TimeControl
                 if (movesToGo != 0)
 			        return remaining / movesToGo - TIME_MARGIN + lead;
 
-                float percentage = Max(0.3f, TimeRemaining / startTime);
-				float divisor = 400 * percentage;
+                //float percentage = Max(0.2f, TimeRemaining / startTime);
+                //float divisor = 500 * percentage;
+                double phaseMultiplier = Max(0.6f, PositionEvaluator.CalculatePhase(Engine.Game.Pos));
 
-				return (int)(Pow(TimeRemaining, 1.2f) / divisor) + lead;
+                //return (int)(Pow(TimeRemaining, 1.2f) * phaseMultiplier / divisor) + lead;
+
+                var time = MathExtensions.Clamp(TimeRemaining * phaseMultiplier, MIN_MOVE_TIME, 500000);
+                return Max(MIN_MOVE_TIME, (int)(-0.0000001d * Pow(time, 2d) + 0.1d * time + 100) + lead);
 			}
 
             return MAX_TIME_REMAINING;
 		}
     }
 
-    private int MilliSeconds(long ticks)
+    private static int MilliSeconds(long ticks)
     {
         double dt = ticks / (double)Stopwatch.Frequency;
         return (int)(1000 * dt);
@@ -78,7 +84,6 @@ public class TimeControl
 
     public void StartInterval()
     {
-        remaining += increment;
         tN = Now;
     }
 
@@ -95,20 +100,20 @@ public class TimeControl
 
 		t0 = Now;
         tN = Now;
-		this.remaining = Max(remaining, 0);
-		this.opponentRemaining = Max(opponentRemaining, 0);
+		this.remaining = remaining;
+		this.opponentRemaining = opponentRemaining;
 		this.increment = increment;
 		this.movesToGo = movesToGo;
         this.searchDepth = searchDepth;
         this.maxNodes = maxNodes;
         this.moveTime = moveTime;
 
-        isInfinite = remaining == 0 && increment == 0 && movesToGo == 0 && moveTime == 0;
+        IsInfinite = remaining == 0 && increment == 0 && movesToGo == 0 && moveTime == 0;
 	}
 
     public bool CanSearchDeeper(int currentDepth, long currentNodeCount, bool alreadySearching = false)
     {
-        if (isInfinite)
+        if (IsInfinite)
         {
 			if (searchDepth != 0 && currentDepth > searchDepth)
 				return false;
@@ -136,13 +141,13 @@ public class TimeControl
     {
 		int estimate = Elapsed + ElapsedInterval * BRANCHING_FACTOR_ESTIMATE;
 
-		//no increment... we need to stay within the per-move time budget
-		if (increment == 0 && estimate > AllocatedTimePerMove)
+		//we need to stay within the per-move time budget
+		if (estimate > AllocatedTimePerMove + increment)
 			return false;
 
 		//shouldn't spend more then the 2x the average on a move
-		if (estimate > 2 * AllocatedTimePerMove)
-			return false;
+		//if (estimate > 2 * AllocatedTimePerMove)
+		//	return false;
 
 		//can't afford the estimate
 		if (estimate > TimeRemaining)

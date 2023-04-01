@@ -1,6 +1,7 @@
 ﻿using Rudzoft.ChessLib;
 using Rudzoft.ChessLib.Evaluation;
 using Rudzoft.ChessLib.Hash.Tables.Transposition;
+using Rudzoft.ChessLib.MoveGeneration;
 using Rudzoft.ChessLib.Types;
 using SolarisChess.Extensions;
 using System;
@@ -53,9 +54,13 @@ public class PositionEvaluator
 		eval += whiteMaterial - blackMaterial;
 		eval += EvaluatePieceSquareTables(position);
 		eval += CalculateMobilityScore(position);
+		eval += CalculatePassedPawnScore(position);
 
-		Player leadingSide = whiteEval > blackEval ? Player.White : Player.Black;
-		MopUpEval(position, leadingSide, ref eval);
+		if (Abs(eval) > 200 && phase > 0.5f)
+		{
+			Player leadingSide = eval > 0 ? Player.White : Player.Black;
+			eval += MopUpEval(position, leadingSide);
+		}
 
 		int perspective = position.SideToMove.IsWhite ? 1 : -1;
 		return eval * perspective;
@@ -77,7 +82,7 @@ public class PositionEvaluator
 	/// <returns>Value between 0 and 1
 	/// <br>1 -> Total endgame (only pawns)</br>
 	/// <br>0 -> Every piece on the board</br></returns>
-	static float CalculatePhase(IPosition position)
+	public static float CalculatePhase(IPosition position)
 	{
 		int phase = TotalPhase;
 
@@ -86,7 +91,7 @@ public class PositionEvaluator
 		phase -= position.Pieces(PieceTypes.Rook).Count * RookPhase;
 		phase -= position.Pieces(PieceTypes.Queen).Count * QueenPhase;
 
-		return Max(0, (phase * 256 + (TotalPhase / 2)) / (TotalPhase * 256));
+		return (phase * 256f + (TotalPhase / 2f)) / (TotalPhase * 256f);
 	}
 
 	static void CountMaterial(IPosition position, out int whiteMaterial, out int blackMaterial, out int whiteMaterialNoPawns, out int blackMaterialNoPawns)
@@ -116,42 +121,94 @@ public class PositionEvaluator
 		blackMaterial = blackMaterialNoPawns + blackPawnCount * pawnValue;
 	}
 
-	private static int CalculateMobilityScore(IPosition position)
+	public static int CalculateMobilityScore(IPosition position)
 	{
 		int GetScore(Player side)
 		{
-			int mobilityScore = 0;
+			//int mobilityScore = 0;
 
-			var attacks =	position.AttacksBy(PieceTypes.Pawn, side)	|
-							position.AttacksBy(PieceTypes.Knight, side) |
+			var attacks = position.AttacksBy(PieceTypes.Knight, side) |
 							position.AttacksBy(PieceTypes.Bishop, side) |
-							position.AttacksBy(PieceTypes.Rook, side)	|
+							position.AttacksBy(PieceTypes.Rook, side) |
 							position.AttacksBy(PieceTypes.Queen, side);
-			while (attacks)
-			{
-				var attackSquare = BitBoards.PopLsb(ref attacks);
-				mobilityScore += 1;
+			//while (attacks)
+			//{
+			//	var attackSquare = BitBoards.PopLsb(ref attacks);
+			//	mobilityScore += 1;
 
-				if (position.AttackedByPawn(attackSquare, ~side))
-					continue;
+			//	if (position.AttackedByPawn(attackSquare, ~side))
+			//		continue;
 
-				mobilityScore += 3;
-			}
+			//	mobilityScore += 2;
+			//}
 
-			return mobilityScore;
+			return attacks.Count;
 		}
+		//int GetScore(Player side)
+		//{
+		//	int mobilityScore = 0;
+
+		//	if (position.InCheck)
+		//		return 0;
+
+		//	bool needToSwitch = side != position.SideToMove;
+		//	if (needToSwitch)
+		//		position.MakeNullMove(null);
+
+		//	var moves = position.GenerateMoves();
+		//	foreach (var move in moves)
+		//	{
+		//		mobilityScore += 1;
+
+		//		if (position.AttackedByPawn(move.Move.ToSquare(), ~side))
+		//			continue;
+
+		//		mobilityScore += 3;
+		//	}
+
+		//	if (needToSwitch)
+		//		position.TakeNullMove();
+
+		//	return mobilityScore;
+		//}
 
 		return GetScore(Player.White) - GetScore(Player.Black);
 	}
 
-	static void MopUpEval(IPosition position, Player winningSide, ref int eval)
+	static int CalculatePassedPawnScore(IPosition position)
 	{
-		if (Abs(eval) < 2)
-			return;
+		if (phase < 0.8f)
+			return 0;
 
+		int eval = 0;
+
+		var whitePawns = position.Pieces(PieceTypes.Pawn, Player.White);
+		var blackPawns = position.Pieces(PieceTypes.Pawn, Player.Black);
+
+		while (whitePawns)
+		{
+			var pawnSquare = BitBoards.PopLsb(ref whitePawns);
+			if (position.IsPawnPassedAt(Player.White, pawnSquare))
+				eval += 10;
+		}
+
+		while (blackPawns)
+		{
+			var pawnSquare = BitBoards.PopLsb(ref blackPawns);
+			if (position.IsPawnPassedAt(Player.Black, pawnSquare))
+				eval -= 10;
+		}
+
+		return eval;
+	}
+
+	static int MopUpEval(IPosition position, Player winningSide)
+	{
 		int mopUpScore = 0;
-		var friendlyKingSquare = position.GetKingSquare(position.SideToMove);
-		var opponentKingSquare = position.GetKingSquare(~position.SideToMove);
+		int perspective = winningSide == Player.White ? 1 : -1;
+
+		var friendlyKingSquare = position.GetKingSquare(winningSide);
+		var opponentKingSquare = position.GetKingSquare(~winningSide);
 
 		int cmd = opponentKingSquare.CenterManhattanDistance();
 		int md = friendlyKingSquare.ManhattanDistance(opponentKingSquare);
@@ -162,7 +219,7 @@ public class PositionEvaluator
 		// Try to get as close as possible to the opponent king
 		mopUpScore += (14 - md) * 4;
 
-		eval += (int)(phase * mopUpScore);
+		return (int)(phase * mopUpScore * perspective);
 	}
 
 	static int EvaluatePieceSquareTables(IPosition position)
@@ -296,6 +353,6 @@ public class PositionEvaluator
 
 	public static int NumMovesToMateFromScore(int score)
 	{
-		return (int)MathF.Ceiling((immediateMateScore - Abs(score)) / 2);
+		return (int)MathF.Ceiling((immediateMateScore - Abs(score)) / 2f);
 	}
 }
