@@ -13,26 +13,27 @@ using Rudzoft.ChessLib.ObjectPoolPolicies;
 using Rudzoft.ChessLib.Validation;
 using SolarisChess.Extensions;
 using Rudzoft.ChessLib.Polyglot;
+using Microsoft.Extensions.Primitives;
 
 namespace SolarisChess;
 
 public static class Engine
 {
-    public const string name = "SolarisChess 1.1";
+    public const string name = "SolarisChess 1.2";
     public const string author = "Okka";
 
-	public static TimeControl controller = new TimeControl();
-
+	public readonly static TimeControl Controller = new TimeControl();
     public readonly static Game Game;
 	public readonly static TranspositionTable Table;
 	public readonly static Search search;
 
+	public static bool Ponder { get; private set; }
 	public static bool Running { get; private set; }
-    public static bool WhiteToPlay => Game.CurrentPlayer().IsWhite;
+    public static bool WhiteToPlay => Game.Pos.SideToMove.IsWhite;
 
     static Engine()
     {
-		var ttConfig = new TranspositionTableConfiguration { DefaultSize = 32 };
+		var ttConfig = new TranspositionTableConfiguration { DefaultSize = 128 };
 		var options = Options.Create(ttConfig);
 		Table = new TranspositionTable(options);
 
@@ -54,7 +55,6 @@ public static class Engine
 		Game = new Game(Table, uci, cpu, sp, pos, moveListObjectPool);
 
 		search = new Search();
-		search.OnSearchComplete += OnSearchComplete;
 	}
 
 	private static void HandleUCICommand(string? command)
@@ -69,8 +69,9 @@ public static class Engine
 			case "uci":
 				Console.WriteLine($"id name {name}");
 				Console.WriteLine($"id author {author}");
-				Console.WriteLine("option name Hash type spin default 32 max 2048");
-				Console.WriteLine("option name OwnBook type check default false");
+				Console.WriteLine("option name Hash type spin default 128 min 8 max 2048");
+				Console.WriteLine("option name Ponder type check default false");
+				//Console.WriteLine("option name OwnBook type check default false");
 				Console.WriteLine(Game.Uci.UciOk());
 				break;
 			case "isready":
@@ -82,8 +83,11 @@ public static class Engine
 			case "go":
 				ParseUCIGo(tokens);
 				break;
+			case "ponderhit":
+				Task.Run(search.PonderHit);
+				break;
 			case "ucinewgame":
-				controller.Reset();
+				Controller.Reset();
 				Table.Clear();
 				//Transpositions.Clear();
 				break;
@@ -118,15 +122,16 @@ public static class Engine
 
     public static void Stop()
     {
-        controller.Stop();
 		search.CancelSearch();
+        Controller.Stop();
     }
 
     public static void Quit()
     {
 		Task.Delay(1000).ContinueWith((t) =>
 		{
-			controller.Stop();
+			search.CancelSearch();
+			Controller.Stop();
 
 			Log("QUITTING");
 			Running = false;
@@ -147,7 +152,7 @@ public static class Engine
 			catch (Exception e)
 			{
 				Log(e.Message);
-				Console.WriteLine("uci info " + e.StackTrace);
+				Console.WriteLine("info string " + e.StackTrace);
 			}
 		}
 	}
@@ -175,19 +180,33 @@ public static class Engine
 		TryParse(tokens, "winc", out int whiteIncrement);
 		TryParse(tokens, "binc", out int blackIncrement);
 
+		bool ponderGo = tokens[1] == "ponder";
+
+		if (ponderGo && !Ponder)
+		{
+			Log("I was told to ponder but pondering isn't allowed!");
+			return;
+		}
+
+		//Console.WriteLine(ponderGo ? "I'm going to ponder" : "I'm going to search");
+
 		int myTime = WhiteToPlay ? whiteTime : blackTime;
 		int opponentTime = WhiteToPlay ? blackTime : whiteTime;
-		int myIncrement = WhiteToPlay ? whiteIncrement: blackIncrement;
+		int myIncrement = WhiteToPlay ? whiteIncrement : blackIncrement;
+		//int myTime			= ponderGo ? (WhiteToPlay ? blackTime : whiteTime) : (WhiteToPlay ? whiteTime : blackTime);
+		//int opponentTime	= ponderGo ? (WhiteToPlay ? whiteTime : blackTime) : (WhiteToPlay ? blackTime : whiteTime);
+		//int myIncrement		= ponderGo ? (WhiteToPlay ? blackIncrement : whiteIncrement) : (WhiteToPlay ? whiteIncrement : blackIncrement);
 
-		controller.Initialize(myTime, opponentTime, myIncrement, movesToGo, maxDepth, maxNodes, moveTime);
+		Controller.Initialize(myTime, opponentTime, myIncrement, movesToGo, maxDepth, maxNodes, moveTime, ponderGo);
 
-		if (controller.IsInfinite && Array.IndexOf(tokens, "infinite") == -1 && maxDepth == 0 && maxNodes == 0)
+		if (Controller.IsInfinite && Array.IndexOf(tokens, "infinite") == -1 && maxDepth == 0 && maxNodes == 0)
 		{
 			Console.WriteLine("Invalid 'go' parameters!");
 			return;
 		}
 
-		Task.Factory.StartNew(() => search.IterativeDeepeningSearch(Game.Pos), TaskCreationOptions.LongRunning);
+		//Task.Factory.StartNew(() => search.IterativeDeepeningSearch(Game.Pos), TaskCreationOptions.LongRunning);
+		Task.Factory.StartNew(() => search.IterativeDeepeningSearch(Game.Pos));
 		//search.IterativeDeepeningSearch(Game.Pos);
 	}
 
@@ -225,6 +244,11 @@ public static class Engine
 		var name = tokens[nameIndex];
 		var valueIndex = Array.IndexOf(tokens, "value") + 1;
 		var value = tokens[valueIndex];
+
+		if (name == "Ponder")
+			Ponder = value == "true";
+		else if (name == "Hash")
+			Table.SetSize(int.Parse(value));
 	}
 
 	private static void MakeUCIMove(string uciMove)
@@ -234,12 +258,28 @@ public static class Engine
 		Game.Pos.MakeMove(move, new());
 	}
 
-	public static void OnSearchComplete(Move move)
+	public static void OnSearchComplete(ValMove bestMove, ValMove ponderMove)
 	{
-		//Game.Pos.MakeMove(extMove, Game.Pos.State);
+		var uciBestMove = Game.Uci.MoveToString(bestMove);
+		var uciPonderMove = Game.Uci.MoveToString(ponderMove);
 
-		var bestMove = Game.Uci.MoveToString(move);
-		Console.WriteLine("bestmove " + bestMove);
+		if (ponderMove.Move.IsNullMove())
+		{
+			Console.WriteLine("bestmove " + uciBestMove);
+		}
+		else
+		{
+			Game.Pos.MakeMove(bestMove, null);
+			Game.Pos.MakeMove(ponderMove, null);
+			
+			if (Game.Pos.IsMate || Game.Pos.IsDraw())
+				Console.WriteLine("bestmove " + uciBestMove);
+			else
+				Console.WriteLine("bestmove " + uciBestMove + " ponder " + uciPonderMove);
+
+			Game.Pos.TakeMove(ponderMove);
+			Game.Pos.TakeMove(bestMove);
+		}
 	}
 
 	public static void OnInfo(int depth, int score, long nodes, int timeMs, int hashPerMille, ValMove[] pvLine)
@@ -247,15 +287,29 @@ public static class Engine
 		double tS = Math.Max(1, timeMs) / 1000.0;
 		int nps = (int)(nodes / tS);
 		StringBuilder sb = new();
-		//sb.Append($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs} hashfull {hashPerMille} multipv 1 pv");
-		sb.Append($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs} hashfull {hashPerMille}");
+		sb.Append($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs} hashfull {hashPerMille} multipv 1 pv");
+		//sb.Append($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs} hashfull {hashPerMille}");
 
-		//foreach (var move in pvLine)
-		//{
-		//	if (move.Move.IsNullMove())
-		//		break;
-		//	sb.Append(" " + move.Move);
-		//}
+		List<ValMove> tempMoves = new();
+
+		foreach (var move in pvLine)
+		{
+			if (move.Move.IsNullMove() || !move.Move.IsValidMove() || !Game.Pos.IsLegal(move.Move))
+				break;
+
+			sb.Append(" " + Game.Uci.MoveToString(move.Move));
+
+			Game.Pos.MakeMove(move, null);
+			tempMoves.Add(move);
+
+			if (Game.Pos.IsMate || Game.Pos.IsDraw() || !Game.Pos.Validate().IsOk)
+				break;
+		}
+
+		for (int i = tempMoves.Count - 1; i >= 0; i--)
+		{
+			Game.Pos.TakeMove(tempMoves[i]);
+		}
 
 		Console.WriteLine(sb);
 	}

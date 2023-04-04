@@ -1,4 +1,5 @@
-﻿using Rudzoft.ChessLib.Enums;
+﻿using Rudzoft.ChessLib;
+using Rudzoft.ChessLib.Enums;
 using Rudzoft.ChessLib.Extensions;
 using Rudzoft.ChessLib.Protocol.UCI;
 using Rudzoft.ChessLib.Types;
@@ -12,6 +13,7 @@ public static class UciExtensions
 	{
 		if (move.IsNullMove())
 			return "(none)";
+
 		var (from, to, type) = move;
 
 		if (type == MoveTypes.Castling)
@@ -26,7 +28,7 @@ public static class UciExtensions
 		s[index++] = to.RankChar;
 
 		if (type == MoveTypes.Promotion)
-			s[index++] = move.PromotedPieceType().GetPieceChar();
+			s[index++] = move.PromotedPieceType().GetPromotionChar();
 
 		return new string(s[..index]);
 	}

@@ -1,5 +1,6 @@
 ﻿using Rudzoft.ChessLib;
 using Rudzoft.ChessLib.Evaluation;
+using Rudzoft.ChessLib.Fen;
 using Rudzoft.ChessLib.Hash.Tables.Transposition;
 using Rudzoft.ChessLib.MoveGeneration;
 using Rudzoft.ChessLib.Types;
@@ -41,8 +42,8 @@ public class PositionEvaluator
 	public static int Evaluate(IPosition position)
 	{
 		int eval = 0;
-		int whiteEval = 0;
-		int blackEval = 0;
+		//int whiteEval = 0;
+		//int blackEval = 0;
 
 		phase = CalculatePhase(position);
 
@@ -63,7 +64,9 @@ public class PositionEvaluator
 		}
 
 		int perspective = position.SideToMove.IsWhite ? 1 : -1;
-		return eval * perspective;
+		eval *= perspective;
+
+		return eval;
 	}
 
 	static int MidGameEval(float phase)
@@ -224,61 +227,33 @@ public class PositionEvaluator
 
 	static int EvaluatePieceSquareTables(IPosition position)
 	{
-		int value = 0;
-		var pieces = position.Pieces();
+		int eval = 0;
 
-		while (pieces)
+		var whitePieces = position.Pieces(Player.White);
+		var blackPieces = position.Pieces(Player.Black);
+
+		while (whitePieces)
 		{
-			var sq = BitBoards.PopLsb(ref pieces);
+			var sq = BitBoards.PopLsb(ref whitePieces);
 
 			var piece = position.GetPiece(sq);
-			bool isWhite = piece.IsWhite;
-			int perspective = isWhite ? 1 : -1;
-
 			GetPieceSquareTable(piece.Type(), out int[] middleTable, out int[] endTable);
-			value += (int)(PieceSquareTable.Read(middleTable, sq, isWhite) * (1 - phase)) * perspective;
-			value += (int)(PieceSquareTable.Read(endTable, sq, isWhite) * phase) * perspective;
+			eval += (int)(PieceSquareTable.Read(middleTable, sq, true) * (1 - phase));
+			eval += (int)(PieceSquareTable.Read(endTable, sq, true) * phase);
 		}
 
-		return value;
+		while (blackPieces)
+		{
+			var sq = BitBoards.PopLsb(ref blackPieces);
+
+			var piece = position.GetPiece(sq);
+			GetPieceSquareTable(piece.Type(), out int[] middleTable, out int[] endTable);
+			eval -= (int)(PieceSquareTable.Read(middleTable, sq, false) * (1 - phase));
+			eval -= (int)(PieceSquareTable.Read(endTable, sq, false) * phase);
+		}
+
+		return eval;
 	}
-
-	//int EvaluatePieceSquareTables()
-	//{
-	//	int GetScore(Player side)
-	//	{
-	//		int value = 0;
-	//		bool isWhite = side == Player.White;
-
-	//		value += EvaluatePieceSquareTable(PieceSquareTable.pawnMiddle, position.Pieces(PieceTypes.Pawn, side), isWhite);
-	//		value += EvaluatePieceSquareTable(PieceSquareTable.rookMiddle, position.Pieces(PieceTypes.Rook, side), isWhite);
-	//		value += EvaluatePieceSquareTable(PieceSquareTable.knightMiddle, position.Pieces(PieceTypes.Knight, side), isWhite);
-	//		value += EvaluatePieceSquareTable(PieceSquareTable.bishopMiddle, position.Pieces(PieceTypes.Bishop, side), isWhite);
-	//		value += EvaluatePieceSquareTable(PieceSquareTable.queenMiddle, position.Pieces(PieceTypes.Queen, side), isWhite);
-
-	//		int kingEarlyPhase = PieceSquareTable.Read(PieceSquareTable.kingMiddle, position.GetKingSquare(side), isWhite);
-	//		value += (int)(kingEarlyPhase * (1 - phase));
-
-	//		int kingLateGame = PieceSquareTable.Read(PieceSquareTable.kingEnd, position.GetKingSquare(side), isWhite);
-	//		value += (int)(kingLateGame * phase);
-
-	//		return value;
-	//	}
-
-	//	return GetScore(Player.White) - GetScore(Player.Black);
-	//}
-
-	//static int EvaluatePieceSquareTable(int[] table, BitBoard squares, bool isWhite)
-	//{
-	//	int value = 0;
-	//	while (squares)
-	//	{
-	//		var square = BitBoards.PopLsb(ref squares);
-
-	//		value += PieceSquareTable.Read(table, square, isWhite);
-	//	}
-	//	return value;
-	//}
 
 	static void GetPieceSquareTable(PieceTypes pieceType, out int[] middleTable, out int[] endTable)
 	{

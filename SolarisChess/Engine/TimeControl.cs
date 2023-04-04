@@ -21,6 +21,10 @@ public class TimeControl
     private int searchDepth;
     private long maxNodes;
     private int moveTime;
+    public bool isPondering;
+
+    //public CancellationTokenSource? monitorTokenSource;
+
     public bool IsInfinite { get; private set; }
 
     private long t0 = -1;
@@ -29,7 +33,7 @@ public class TimeControl
 	//public int AllocatedTimePerMove => TimeRemaining / movesToGo - TIME_MARGIN;
 	private int TimeRemaining => moveTime == 0 ? remaining - TIME_MARGIN : moveTime;
 
-    private long Now => Stopwatch.GetTimestamp();
+    private static long Now => Stopwatch.GetTimestamp();
     public int Elapsed => MilliSeconds(Now - t0);
     public int ElapsedInterval => MilliSeconds(Now - tN);
 
@@ -43,7 +47,8 @@ public class TimeControl
             if (startTime != 0)
             {
                 // Add some of the time lead to the available time
-                int lead = (int)(Max(0, Abs(remaining) - Abs(opponentRemaining)) * 0.2f);
+                //int lead = (int)(Max(0, Abs(remaining) - Abs(opponentRemaining)) * 0.2f);
+				int lead = (int)MathExtensions.Clamp((remaining - opponentRemaining) * 0.2d, 0, 4000);
 
                 if (movesToGo != 0)
 			        return remaining / movesToGo - TIME_MARGIN + lead;
@@ -55,7 +60,7 @@ public class TimeControl
                 //return (int)(Pow(TimeRemaining, 1.2f) * phaseMultiplier / divisor) + lead;
 
                 var time = MathExtensions.Clamp(TimeRemaining * phaseMultiplier, MIN_MOVE_TIME, 500000);
-                return Max(MIN_MOVE_TIME, (int)(-0.0000001d * Pow(time, 2d) + 0.1d * time + 100) + lead);
+                return Max(MIN_MOVE_TIME, (int)(-0.0000001d * Pow(time, 2d) + 0.07d * time + 100) + lead);
 			}
 
             return MAX_TIME_REMAINING;
@@ -78,6 +83,8 @@ public class TimeControl
         searchDepth = 0;
         maxNodes = 0;
         moveTime = 0;
+        isPondering = false;
+        //monitorTokenSource = null;
         t0 = Now;
         tN = t0;
     }
@@ -89,11 +96,18 @@ public class TimeControl
 
     public void Stop()
     {
-        //this will cause CanSearchDeeper() and CheckTimeBudget() to evaluate to 'false'
+        //monitorTokenSource?.Cancel();
+        isPondering = false;
         remaining = 0;
     }
 
-    public void Initialize(int remaining, int opponentRemaining, int increment, int movesToGo, int searchDepth, long maxNodes, int moveTime)
+	public void PonderHit()
+	{
+		t0 = Now;
+		isPondering = false;
+	}
+
+	public void Initialize(int remaining, int opponentRemaining, int increment, int movesToGo, int searchDepth, long maxNodes, int moveTime, bool isPondering = false)
     {
         if (startTime == 0)
             startTime = remaining;
@@ -107,12 +121,16 @@ public class TimeControl
         this.searchDepth = searchDepth;
         this.maxNodes = maxNodes;
         this.moveTime = moveTime;
+        this.isPondering = isPondering;
 
         IsInfinite = remaining == 0 && increment == 0 && movesToGo == 0 && moveTime == 0;
 	}
 
     public bool CanSearchDeeper(int currentDepth, long currentNodeCount, bool alreadySearching = false)
     {
+        if (isPondering)
+            return true;
+
         if (IsInfinite)
         {
 			if (searchDepth != 0 && currentDepth > searchDepth)
@@ -137,7 +155,7 @@ public class TimeControl
         return true;
     }
 
-    bool HasTimeForNextDepth()
+    public bool HasTimeForNextDepth()
     {
 		int estimate = Elapsed + ElapsedInterval * BRANCHING_FACTOR_ESTIMATE;
 
@@ -155,12 +173,4 @@ public class TimeControl
 
         return true;
 	}
-
-    public bool CheckTimeBudget()
-    {
-        if (increment == 0)
-            return Elapsed > AllocatedTimePerMove;
-        else
-            return Elapsed > TimeRemaining;
-    }
 }

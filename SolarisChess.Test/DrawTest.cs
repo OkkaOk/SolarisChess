@@ -49,39 +49,53 @@ public sealed class DrawTest
 
 		game.NewGame("8/8/1Q6/1p6/5k2/8/2P3P1/7K b - - 5 101");
 
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 		game.Pos.MakeMove(new Move(Square.F4, Square.G5), null);
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 
 		game.Pos.MakeMove(new Move(Square.H1, Square.H2), null);
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 		game.Pos.MakeMove(new Move(Square.G5, Square.F5), null);
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 		game.Pos.MakeMove(new Move(Square.H2, Square.H1), null);
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 		game.Pos.MakeMove(new Move(Square.F5, Square.G5), null);
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 
-		output.WriteLine(game.Pos.IsDraw() + "");
-		Assert.False(game.Pos.IsDraw());
+		output.WriteLine(game.Pos.IsThreeFoldRepetition() + "");
+		Assert.False(game.Pos.IsThreeFoldRepetition());
 
 		game.Pos.MakeMove(new Move(Square.H1, Square.H2), null);
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 		game.Pos.MakeMove(new Move(Square.G5, Square.F5), null);
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 
-		output.WriteLine(game.Pos.IsDraw() + "");
-		Assert.False(game.Pos.IsDraw());
+		output.WriteLine(game.Pos.IsThreeFoldRepetition() + "");
+		Assert.False(game.Pos.IsThreeFoldRepetition());
 
 		game.Pos.MakeMove(new Move(Square.H2, Square.H1), null);
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 		game.Pos.MakeMove(new Move(Square.F5, Square.G5), null);
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 
-		output.WriteLine(game.Pos.IsDraw() + "");
-		Assert.True(game.Pos.IsDraw());
+		output.WriteLine(game.Pos.IsThreeFoldRepetition() + "");
+		Assert.True(game.Pos.IsThreeFoldRepetition());
 
 		game.Pos.TakeMove(new Move(Square.F5, Square.G5));
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 		game.Pos.TakeMove(new Move(Square.H2, Square.H1));
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 
-		output.WriteLine(game.Pos.IsDraw() + "");
-		Assert.False(game.Pos.IsDraw());
+		output.WriteLine(game.Pos.IsThreeFoldRepetition() + "");
+		Assert.False(game.Pos.IsThreeFoldRepetition());
 
 		game.Pos.MakeMove(new Move(Square.H2, Square.H1), null);
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 		game.Pos.MakeMove(new Move(Square.F5, Square.G5), null);
+		output.WriteLine(game.Pos.State.Key.Key.ToString());
 
-		output.WriteLine(game.Pos.IsDraw() + "");
-		Assert.True(game.Pos.IsDraw());
+		output.WriteLine(game.Pos.IsThreeFoldRepetition() + "");
+		Assert.True(game.Pos.IsThreeFoldRepetition());
 	}
 
 	[Fact]
@@ -114,8 +128,8 @@ public sealed class DrawTest
 		game.Pos.MakeMove(new Move(Square.F5, Square.F4), null);
 		game.Pos.MakeMove(new Move(Square.D1, Square.A1), null);
 
-		output.WriteLine(game.Pos.IsDraw() + "");
-		Assert.False(game.Pos.IsDraw());
+		output.WriteLine(game.Pos.IsThreeFoldRepetition() + "");
+		Assert.False(game.Pos.IsThreeFoldRepetition());
 
 	}
 }
