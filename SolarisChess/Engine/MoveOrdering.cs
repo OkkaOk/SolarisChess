@@ -26,35 +26,54 @@ public class MoveOrdering
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static ValMove[] GenerateAndOrderMoves(IPosition position, int plyFromRoot, ValMove[]? pline = null, MoveGenerationType type = MoveGenerationType.Legal)
 	{
-		MoveList moves = new();
-		moves.Generate(position, type);
-
 		float phase = PositionEvaluator.CalculatePhase(position);
+		int mult1 = (int)(phase * 5 + 1);	// 1-6. Linear
+		int mult2 = (int)Pow(phase + 1, 4); // 1-16. gradual rise
+
 		var entry = Cluster.DefaultEntry;
 		Engine.Table.Probe(position.State.Key, ref entry);
 
-		return moves.OrderByDescending(valMove =>
+		MoveList ml = new();
+		ml.Generate(position, type);
+
+		ValMove[] orderedMoves = new ValMove[ml.Length];
+
+		for (int i = 0; i < ml.Length; i++)
 		{
+			ValMove valMove = ml[i];
+
 			int moveScoreGuess = 0;
 
 			if (valMove.Move == entry.Move)
 			{
-				//Console.WriteLine("TT");
-				return 100000000;
+				valMove.Score = 100000000;
+				orderedMoves[i] = valMove;
+				continue;
 			}
 
 			if (pline != null && pline[0] == valMove)
 			{
 				//Console.WriteLine(pline[0]);
-				return 1000000;
+				valMove.Score = 1000000;
+				orderedMoves[i] = valMove;
+				continue;
 			}
 
 			if (valMove == Search.killerMoves[plyFromRoot, 0])
-				return 10000;
-			if (valMove == Search.killerMoves[plyFromRoot, 1])
-				return 8000;
+			{
+				valMove.Score = 10000;
+				orderedMoves[i] = valMove;
+				continue;
+			}
 
-			var (from, to, type) = valMove.Move;
+			if (valMove == Search.killerMoves[plyFromRoot, 1])
+			{
+				valMove.Score = 8000;
+				orderedMoves[i] = valMove;
+				continue;
+			}
+
+			var (from, to, moveType) = valMove.Move;
 
 			var movePieceType = position.GetPiece(from).Type();
 			var capturePieceType = position.GetPiece(to).Type();
@@ -65,7 +84,7 @@ public class MoveOrdering
 			if (isCapture)
 			{
 				moveScoreGuess += 10 * PositionEvaluator.GetPieceValue(capturePieceType) - 5 * PositionEvaluator.GetPieceValue(movePieceType);
-				moveScoreGuess = (int)(moveScoreGuess * (phase * 5 + 1));
+				moveScoreGuess *= mult2;
 			}
 			else
 			{
@@ -73,30 +92,41 @@ public class MoveOrdering
 			}
 
 			if (phase > 0.6f && position.GivesCheck(valMove))
-				moveScoreGuess += (int)(PositionEvaluator.pawnValue * (phase * 5 + 1));
+				moveScoreGuess += PositionEvaluator.pawnValue * mult1;
 
-			if (movePieceType == PieceTypes.Pawn)
+			switch (movePieceType)
 			{
-				moveScoreGuess += (int)(PositionEvaluator.pawnValue * Pow(phase + 1, 4));
+				case PieceTypes.Pawn:
+					moveScoreGuess += PositionEvaluator.pawnValue * mult2;
 
-				if (type == MoveTypes.Promotion)
-				{
-					var promotionType = valMove.Move.PromotedPieceType();
-					moveScoreGuess += PositionEvaluator.GetPieceValue(promotionType) * 5;
+					if (moveType == MoveTypes.Promotion)
+					{
+						var promotionType = valMove.Move.PromotedPieceType();
+						moveScoreGuess += PositionEvaluator.GetPieceValue(promotionType) * 5;
+					}
+					break;
 
-					//Console.WriteLine("Promotion: " + promotionType.GetPieceChar());
-				}
+				case PieceTypes.King:
+					moveScoreGuess += (int)Math.Pow(20, phase * 3); // value between 1-8000. Explodes near the end. At 0.5 it's around 90
+					break;
+
+				default:
+					// If the target square is attacked by opponent pawn
+					if (position.AttackedByPawn(to, ~position.SideToMove))
+						moveScoreGuess -= 5 * PositionEvaluator.GetPieceValue(movePieceType) + 5 * PositionEvaluator.pawnValue;
+					break;
 			}
-			else
-			{
-				// If the target square is attacked by opponent pawn
-				if (position.AttackedByPawn(to, ~position.SideToMove))
-				{
-					moveScoreGuess -= 5 * PositionEvaluator.GetPieceValue(movePieceType) + 5 * PositionEvaluator.pawnValue;
-				}
-			}
 
-			return moveScoreGuess;
-		}).ToArray();
+			valMove.Score = moveScoreGuess;
+
+			orderedMoves[i] = valMove;
+		}
+
+		Array.Sort(orderedMoves, (a, b) => b.Score.CompareTo(a.Score));
+
+		for (int i = 0; i < orderedMoves.Length; i++)
+			orderedMoves[i].Score = 0;
+
+		return orderedMoves;
 	}
 }

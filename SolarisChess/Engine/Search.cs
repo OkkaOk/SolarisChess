@@ -22,12 +22,13 @@ namespace SolarisChess;
 public class Search
 {
 	const int SearchInvalid = 20000;
-	const int AspirationWindowSize = 60;
+	const int AspirationWindowSize = 25;
 	const int DeltaMargin = 200;
 	const int DeltaValue = DeltaMargin + PositionEvaluator.queenValue;
 	const int ProbCutDepth = 4;
 	const int ProbCutReduction = 3;
 	const int ProbCutMargin = PositionEvaluator.pawnValue;
+	static readonly int[] AspirationDelta = { 50, 97, 307, 965, 3036, 9546, PositionEvaluator.positiveInfinity };
 
 	private ValMove bestMove, ponderMove;
 	public static readonly ValMove[,] killerMoves = new ValMove[Values.MAX_PLY, 2];
@@ -37,22 +38,23 @@ public class Search
 	private CancellationToken CancellationToken => SearchCancellationTokenSource.Token;
 
 	private int maxDepth;
+	private int selectiveDepth;
 
 	static TranspositionTable Table => Engine.Table;
 	static TimeControl Controller => Engine.Controller;
 	static IGame Game => Engine.Game;
 
 	readonly Stopwatch timer = new();
-	long normalSearchTime = 0;
-	long quiescenceTime = 0;
 
 	// Diagnostics
-	int numNodes;
-	int numQNodes;
-	int numCutoffs;
-	int numTranspositions;
+	public long totalSearchTime = 0;
+	public long quiescenceTime = 0;
+	public int numNodes;
+	public int numQNodes;
+	public int numCutoffs;
+	public int numTranspositions;
 
-	int TotalNodes => numNodes + numQNodes;
+	public int TotalNodes => numNodes + numQNodes;
 
 	public Search()
 	{
@@ -82,34 +84,44 @@ public class Search
 		//StartMonitor();
 		maxDepth = 1;
 
-		Table.NewSearch();
 		history.AgeTable();
+		Table.NewSearch();
 
 		while (!CancellationToken.IsCancellationRequested)
 		{
 			Controller.StartInterval();
+			selectiveDepth = maxDepth;
 
 			long beginTime = timer.ElapsedMilliseconds;
-			int alpha = bestMove.Score - AspirationWindowSize;
-			int beta = bestMove.Score + AspirationWindowSize;
+			int alpha = bestMove.Score - AspirationDelta[0];
+			int beta = bestMove.Score + AspirationDelta[0];
+
+			if (maxDepth == 1)
+			{
+				alpha = PositionEvaluator.negativeInfinity;
+				beta = PositionEvaluator.positiveInfinity;
+			}
 
 			//var task = Task.Factory.StartNew(() => PVSearch(position, maxDepth, 0, PositionEvaluator.negativeInfinity, PositionEvaluator.positiveInfinity, pvline), CancellationToken);
-			//task.Wait();
-			//int score = task.Result;
 
 			var task = Task.Factory.StartNew(() =>
 			{
 				int score = PVSearch(position, maxDepth, 0, alpha, beta, pvline);
 
 				//Fail - low or fail-high->widen the search window
+				var failCount = 0;
 				while (score <= alpha || score >= beta)
 				{
+					//Console.WriteLine("Trying depth " + maxDepth + " again");
 					if (score <= alpha)
-						alpha -= AspirationWindowSize;
+						alpha -= AspirationDelta[failCount];
 					if (score >= beta)
-						beta += AspirationWindowSize;
+						beta += AspirationDelta[failCount];
 
 					score = PVSearch(position, maxDepth, 0, alpha, beta, pvline);
+
+					if (failCount < AspirationDelta.Length - 1)
+						failCount++;
 
 					if (CancellationToken.IsCancellationRequested)
 						break;
@@ -119,10 +131,9 @@ public class Search
 
 			}, CancellationToken);
 
-			//task.Wait();
 			int score = task.Result;
 
-			normalSearchTime += timer.ElapsedMilliseconds - beginTime;
+			totalSearchTime += timer.ElapsedMilliseconds - beginTime;
 
 			if (CancellationToken.IsCancellationRequested)
 				break;
@@ -131,7 +142,8 @@ public class Search
 			ponderMove = pvline[1];
 
 			// Update diagnostics
-			Engine.OnInfo(maxDepth, score, TotalNodes, (int)watch.ElapsedMilliseconds, Table.Fullness(), pvline);
+			var micros = (int)(watch.ElapsedTicks * 1000000 / Stopwatch.Frequency);
+			Engine.OnInfo(maxDepth, selectiveDepth, score, TotalNodes, micros, Table.Fullness(), pvline);
 
 			if (PositionEvaluator.IsMateScore(score))
 			{
@@ -139,13 +151,6 @@ public class Search
 				// Exit search if found a mate
 				if (!Controller.isPondering && plyToMate < maxDepth)
 					break;
-
-				// Happens only when pondering the very last move of the game
-				//if (movesToMate == 0)
-				//{
-				//	Console.WriteLine("Returned from search because i'm mated");
-				//	return;
-				//}
 			}
 
 			maxDepth++;
@@ -182,14 +187,8 @@ public class Search
 		Engine.Log("Qnodes visited: " + numQNodes);
 		Engine.Log("Total branches cut off: " + numCutoffs);
 		Engine.Log("Total tt hits: " + numTranspositions);
-		Engine.Log("PVSearch time: " + (normalSearchTime - quiescenceTime));
+		Engine.Log("PVSearch time: " + (totalSearchTime - quiescenceTime));
 		Engine.Log("Quiescence time: " + quiescenceTime);
-
-		//string pv = "";
-		//for (int i = 0; i < maxDepth; i++)
-		//	pv += Game.Uci.MoveToString(pvline[i].Move) + " ";
-
-		//Engine.Log("PV line: " + pv);
 
 		Engine.OnSearchComplete(bestMove, ponderMove);
 	}
@@ -210,22 +209,34 @@ public class Search
 		if (CancellationToken.IsCancellationRequested)
 			return SearchInvalid;
 
-		ValMove[] line = new ValMove[maxDepth];
-
-		numNodes++;
-
-		if (plyFromRoot > 0 && ProbeTranspositionTable(position.State.Key, depth, ref alpha, ref beta, out TranspositionTableEntry entry))
-		{
-			pline[0].Move = entry.Move;
-			pline[0].Score = entry.Value;
-			for (int j = 1; j < maxDepth; j++)
-				pline[j] = line[j - 1];
-
-			return entry.Value;
-		}
-
-		if (position.HasRepetition() || position.IsThreeFoldRepetition() || position.IsInsufficientMaterial())
+		if (position.IsThreeFoldRepetition() || position.IsInsufficientMaterial())
 			return 0;
+
+		var entry = Cluster.DefaultEntry;
+		//if (plyFromRoot > 0 && Table.Probe(position.State.Key, ref entry) && entry.Depth >= depth)
+		//{
+			//if (entry.Type == Bound.Exact)
+			//{
+			//	GetPVFromTranspositionTable(position, pline);
+			//	//pline[0] = entry.Move;
+			//	//for (int j = 1; j < maxDepth; j++)
+			//	//	pline[j] = ValMove.Empty;
+
+			//	return entry.Value;
+			//}
+			//if (entry.Type == Bound.Alpha)
+			//	alpha = Max(alpha, entry.Value);
+			//else if (entry.Type == Bound.Beta)
+			//	beta = Min(beta, entry.Value);
+
+			//if (alpha >= beta)
+			//{
+			//	//GetPVFromTranspositionTable(position, pline);
+			//	return entry.Value;
+			//}
+		//}
+
+		ValMove[] line = new ValMove[maxDepth];
 
 		// Skip this position if a mating sequence has already been found earlier in
 		// the search, which would be shorter than any mate we could find from here.
@@ -238,12 +249,20 @@ public class Search
 
 		if (depth <= 0)
 		{
+			if (plyFromRoot > selectiveDepth)
+				selectiveDepth = plyFromRoot;
+
 			long beginTime = timer.ElapsedMilliseconds;
 			int eval = QuiescenceSearch(position, 0, plyFromRoot, alpha, beta);
 			quiescenceTime += timer.ElapsedMilliseconds - beginTime;
 
 			return eval;
 		}
+
+		numNodes++;
+
+		int bestScore = alpha;
+		var boundType = Bound.Alpha;
 
 		#region test
 		//if (depth >= ProbCutDepth && Abs(alpha) < PositionEvaluator.immediateMateScore)
@@ -257,8 +276,41 @@ public class Search
 		//}
 		#endregion
 
-		var moves = MoveOrdering.GenerateAndOrderMoves(position, plyFromRoot, pline);
+		float phase = PositionEvaluator.CalculatePhase(position);
+		bool endGame = phase > 0.7f;
+		bool inCheck = position.InCheck;
+		var state = new State();
 
+		// Null move reductions
+		if (!endGame && !inCheck && depth > 3 && plyFromRoot > 0)
+		{
+			int R = 3;
+			if (depth > 6)
+				R = 4;
+
+			// Give the turn to the opponent and evaluate the position with a lower depth
+			position.MakeNullMove(in state);
+			int nullMoveScore = -ZWSearch(position, 1 - beta, depth - R - 1, plyFromRoot + 1);
+			//int nullMoveScore = -PVSearch(position, depth - R - 1, plyFromRoot + 1, -beta, -alpha, line, false);
+			position.TakeNullMove();
+
+			if (nullMoveScore >= beta)
+			{
+				//Console.WriteLine(nullMoveScore + " " + beta + " " + depth);
+				//depth -= 4;
+				//if (depth <= 0)
+				//{
+				//	long beginTime = timer.ElapsedMilliseconds;
+				//	int eval = QuiescenceSearch(position, 0, plyFromRoot, alpha, beta);
+				//	quiescenceTime += timer.ElapsedMilliseconds - beginTime;
+				//	return eval;
+				//}
+				numCutoffs++;
+				return nullMoveScore;
+			}
+		}
+
+		var moves = MoveOrdering.GenerateAndOrderMoves(position, plyFromRoot, pline);
 		if (moves.Length == 0)
 		{
 			if (position.InCheck)
@@ -266,18 +318,17 @@ public class Search
 				int mateScore = PositionEvaluator.immediateMateScore - plyFromRoot;
 				return -mateScore;
 			}
-			// Return a little bit of score, trying to prolong the draw.
-			return 0; 
-		}
 
-		var type = Bound.Alpha;
+			return 0; // Stalemate.
+		}
 
 		for (int i = 0; i < moves.Length; i++)
 		{
 			bool moveIsQuiet = !position.IsCaptureOrPromotion(moves[i]);
 			//bool moveGivesCheck = position.GivesCheck(moves[i]);
+			bool isKiller = killerMoves[plyFromRoot, 0] == moves[i] || killerMoves[plyFromRoot, 1] == moves[i];
 
-			position.MakeMove(moves[i], null);
+			position.MakeMove(moves[i], in state);
 
 			int score;
 			if (i == 0)
@@ -286,14 +337,32 @@ public class Search
 					depth++;
 
 				score = -PVSearch(position, depth - 1, plyFromRoot + 1, -beta, -alpha, line);
+
+				if (score > alpha)
+					alpha = score;
 			}
 			else
 			{
-				score = -ZWSearch(position, -alpha, depth - 1, plyFromRoot + 1, line);
+				int newDepth = depth - 1;
 
-				if (score > alpha)
+				// Late Move Reductions
+				if (depth > 3 && moveIsQuiet && !isKiller && !inCheck)
 				{
+					newDepth -= (int)Sqrt(i);
+
+					newDepth = Max(0, newDepth);
+				}
+
+				score = -ZWSearch(position, -alpha, newDepth, plyFromRoot + 1);
+				//score = -PVSearch(position, depth - 1, plyFromRoot + 1, -alpha - 1, -alpha, line);
+				if (score > alpha && score < beta)
+				{
+					if (position.InCheck)
+						depth++;
+
 					score = -PVSearch(position, depth - 1, plyFromRoot + 1, -beta, -alpha, line);
+					if (score > alpha)
+						alpha = score;
 				}
 			}
 
@@ -318,18 +387,17 @@ public class Search
 				}
 
 				numCutoffs++;
-
 				Table.Store(position.State.Key, score, Bound.Beta, (sbyte)depth, moves[i], 0);
-				return beta;
+
+				return score;
 			}
 
-			if (score > alpha)
+			if (score > bestScore)
 			{
-
 				// Found a new best move in this position
-				alpha = score;
+				bestScore = score;
+				boundType = Bound.Exact;
 
-				type = Bound.Exact;
 				pline[0] = moves[i];
 				for (int j = 1; j < maxDepth; j++)
 				{
@@ -338,65 +406,49 @@ public class Search
 			}
 		}
 
-		Table.Store(position.State.Key, alpha, type, (sbyte)depth, pline[0], 0);
+		Table.Store(position.State.Key, bestScore, boundType, (sbyte)depth, pline[0], 0);
 
-		return alpha;
+		return bestScore;
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	int ZWSearch(IPosition position, int beta, int depth, int plyFromRoot, ValMove[] pline, bool allowNullMove = true)
+	int ZWSearch(IPosition position, int beta, int depth, int plyFromRoot)
 	{
 		if (CancellationToken.IsCancellationRequested)
 			return SearchInvalid;
 
-		if (position.IsThreeFoldRepetition())
+		if (position.IsThreeFoldRepetition() || position.IsInsufficientMaterial())
 			return 0;
 
+		int alpha = beta - 1;
 		var entry = Cluster.DefaultEntry;
 		if (plyFromRoot > 0 && Table.Probe(position.State.Key, ref entry) && entry.Depth >= depth)
 		{
-			numTranspositions++;
 
-			if (entry.Type == Bound.Exact && entry.Value >= beta)
+			if (entry.Type == Bound.Exact)
 				return entry.Value;
+			//else if (entry.Type == Bound.Alpha)
+			//	alpha = Max(alpha, entry.Value);
+			else if (entry.Type == Bound.Beta)
+				beta = Min(beta, entry.Value);
 
-			if (entry.Type == Bound.Beta && entry.Value < beta)
-				beta = entry.Value; // Update beta with the upper bound value
+			//if (alpha >= beta)
+			//	return entry.Value;
 		}
 
-		// alpha is beta - 1
 		// this is either a cut- or all-node
 		if (depth <= 0)
 		{
 			long beginTime = timer.ElapsedMilliseconds;
-			int eval = QuiescenceSearch(position, 0, plyFromRoot, beta - 1, beta);
+			int eval = QuiescenceSearch(position, 0, plyFromRoot, alpha, beta);
 			quiescenceTime += timer.ElapsedMilliseconds - beginTime;
 
 			return eval;
 		}
 
-		// Null move pruning
-		if (allowNullMove && depth >= 2 && !position.InCheck && plyFromRoot > 0)
-		{
-			position.MakeNullMove(null);
+		numNodes++;
 
-			// Reduce depth by R + 1, where R is the reduction factor, often set to 2 or 3
-			int nullMoveSearchDepth = depth - 3;
-
-			// Search with the opposite side to move, disallowing further null moves
-			int nullMoveScore = -ZWSearch(position, 1 - beta, nullMoveSearchDepth, plyFromRoot + 1, pline, false);
-
-			position.TakeNullMove();
-
-			if (nullMoveScore >= beta)
-			{
-				numCutoffs++;
-				return beta;
-			}
-		}
-
-		var moves = MoveOrdering.GenerateAndOrderMoves(position, plyFromRoot, pline);
-
+		var moves = MoveOrdering.GenerateAndOrderMoves(position, plyFromRoot);
 		if (moves.Length == 0)
 		{
 			if (position.InCheck)
@@ -407,33 +459,22 @@ public class Search
 			return 0;
 		}
 
-		bool inCheck = position.InCheck;
+		int bestScore = PositionEvaluator.negativeInfinity;
+		//ValMove bestZWMove = ValMove.Empty;
 
+		var state = new State();
 		for (int i = 0; i < moves.Length; i++)
 		{
-			numNodes++;
-
 			bool moveIsQuiet = !position.IsCaptureOrPromotion(moves[i]);
-			bool isKiller = killerMoves[plyFromRoot, 0] == moves[i] || killerMoves[plyFromRoot, 1] == moves[i];
 
-			int newDepth = depth - 1;
-
-			// Late Move Reductions
-			if (depth > 3 && moveIsQuiet && !isKiller && !inCheck && allowNullMove)
-			{
-				newDepth -= (int)Sqrt(i);
-
-				newDepth = Max(0, newDepth);
-			}
-
-			position.MakeMove(moves[i], null);
-			int score = -ZWSearch(position, 1 - beta, newDepth, plyFromRoot + 1, pline);
+			position.MakeMove(moves[i], in state);
+			int score = -ZWSearch(position, -alpha, depth - 1, plyFromRoot + 1);
 			position.TakeMove(moves[i]);
 
 			if (CancellationToken.IsCancellationRequested)
 				return SearchInvalid;
 
-			// fail-hard beta-cutoff
+			// fail-soft beta-cutoff
 			if (score >= beta)
 			{
 				if (moveIsQuiet)
@@ -441,18 +482,24 @@ public class Search
 					//TODO: Mate killers
 					killerMoves[plyFromRoot, 1] = killerMoves[plyFromRoot, 0];
 					killerMoves[plyFromRoot, 0] = moves[i];
-					var (from, to) = moves[i].Move;
-					history.Add(position.SideToMove, from, to, depth * depth);
+					//var (from, to) = moves[i].Move;
+					//history.Add(position.SideToMove, from, to, depth * depth);
 				}
 
-				Table.Store(position.State.Key, score, Bound.Beta, (sbyte)newDepth, moves[i], 0);
+				//Table.Store(position.State.Key, score, Bound.Beta, (sbyte)depth, moves[i], 0);
 
 				numCutoffs++;
-				return beta;
+				return score;
+			}
+
+			if (score > bestScore)
+			{
+				bestScore = score;
+			//	bestZWMove = moves[i];
 			}
 		}
 
-		return beta - 1; // fail-hard, return alpha
+		return bestScore;
 	}
 
 	/// <summary>
@@ -468,7 +515,7 @@ public class Search
 		if (CancellationToken.IsCancellationRequested)
 			return SearchInvalid;
 
-		int alphaOrig = alpha;
+		numQNodes++;
 
 		if (ProbeTranspositionTable(position.State.Key, (sbyte)depth, ref alpha, ref beta, out TranspositionTableEntry entry))
 			return entry.Value;
@@ -476,29 +523,20 @@ public class Search
 		if (position.IsInsufficientMaterial())
 			return 0;
 
-		// A player isn't forced to make a capture (typically), so see what the evaluation is without capturing anything.
-		// This prevents situations where a player only has bad captures available from being evaluated as bad,
-		// when the player might have good non-capture moves available.
 		int standPat = PositionEvaluator.Evaluate(position);
 
 		if (standPat >= beta)
 		{
 			numCutoffs++;
 			//Table.Store(position.State.Key, standPat, Bound.Beta, (sbyte)depth, ValMove.Empty, 0);
-			return beta;
+			return standPat;
 		}
-
-		//int delta = PositionEvaluator.queenValue;
-		//if (position.State.LastMove.IsPromotionMove())
-		//	delta += 775;
-
-		//if (standPat < alpha - delta)
-		//	return alpha;
 
 		if (standPat > alpha)
 			alpha = standPat;
 
 		var moves = MoveOrdering.GenerateAndOrderMoves(position, plyFromRoot);
+		//var moves = position.GenerateMoves();
 
 		if (moves.Length == 0)
 		{
@@ -510,25 +548,26 @@ public class Search
 			return 0; // Return a little bit of score, trying to prolong the draw.
 		}
 
-		float phase = PositionEvaluator.CalculatePhase(position);
-		bool endGame = phase > 0.7f;
+		//float phase = PositionEvaluator.CalculatePhase(position);
+		//bool endGame = phase > 0.7f;
 
-		ValMove bestMove = ValMove.Empty;
+		//ValMove bestQMove = ValMove.Empty;
+		//var boundType = Bound.Alpha;
 
+		var state = new State();
 		foreach (var move in moves)
 		{
 			if (!position.IsCaptureOrPromotion(move))
 				continue;
 
-			if (!endGame)
+			var capturePieceType = position.GetPieceType(move.Move.ToSquare());
+			if (standPat + DeltaValue + PositionEvaluator.GetPieceValue(capturePieceType) <= alpha)
 			{
-				var capturePieceType = position.GetPieceType(move.Move.ToSquare());
-				if (standPat + DeltaValue + PositionEvaluator.GetPieceValue(capturePieceType) <= alpha)
-					continue;
+				numCutoffs++;
+				continue;
 			}
 
-			numQNodes++;
-			position.MakeMove(move, null);
+			position.MakeMove(move, in state);
 			int score = -QuiescenceSearch(position, depth - 1, plyFromRoot + 1, -beta, -alpha);
 			position.TakeMove(move);
 
@@ -539,19 +578,20 @@ public class Search
 			{
 				numCutoffs++;
 				//Table.Store(position.State.Key, score, Bound.Beta, (sbyte)depth, move, 0);
-				return beta;
+
+				return score;
 			}
 
 			if (score > alpha)
 			{
 				alpha = score;
-				bestMove = move;
+				//bestQMove = move;
+				//boundType = Bound.Exact;
 			}
 
 		}
 
-		Bound type = GetBoundType(alphaOrig, beta, alpha);
-		Table.Store(position.State.Key, alpha, type, (sbyte)depth, bestMove, 0);
+		//Table.Store(position.State.Key, alpha, boundType, (sbyte)depth, bestQMove, 0);
 
 		return alpha;
 	}
@@ -564,7 +604,6 @@ public class Search
 		if (Table.Probe(key, ref entry) && entry.Depth >= depth)
 		{
 			numTranspositions++;
-
 			if (entry.Type == Bound.Exact)
 			{
 				return true;
@@ -585,6 +624,41 @@ public class Search
 		}
 
 		return false;
+	}
+
+	private void GetPVFromTranspositionTable(IPosition position, ValMove[] pline)
+	{
+		TranspositionTableEntry entry = new TranspositionTableEntry();
+
+		int count = 0;
+		List<Move> movesMade = new();
+
+		for (int depth = 0; depth < maxDepth; depth++)
+		{
+			if (!Table.Probe(position.State.Key, ref entry) || entry.Move == Move.EmptyMove || entry.Type != Bound.Exact)
+				break;
+
+			if (!position.IsLegal(entry.Move) || position.MovedPiece(entry.Move).ColorOf() != position.SideToMove)
+				break;
+
+			pline[depth] = entry.Move;
+			pline[depth].Score = entry.Value;
+			movesMade.Add(entry.Move);
+
+			position.MakeMove(entry.Move, null);
+			count++;
+		}
+
+		//for (int i = count; i < maxDepth; i++)
+		//{
+		//	pline[i] = ValMove.Empty;
+		//}
+
+		// Undo the moves made to restore the original position
+		for (int i = movesMade.Count - 1; i >= 0; i--)
+		{
+			position.TakeMove(movesMade[i]);
+		}
 	}
 
 	private Bound GetBoundType(int alphaOrig, int beta, int score)
@@ -617,7 +691,7 @@ public class Search
 		numQNodes = 0;
 		numCutoffs = 0;
 		numTranspositions = 0;
-		normalSearchTime = 0;
+		totalSearchTime = 0;
 		quiescenceTime = 0;
 	}
 }

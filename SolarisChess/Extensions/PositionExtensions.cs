@@ -45,32 +45,32 @@ public static class PositionExtensions
 
 	public static bool IsThreeFoldRepetition(this IPosition position)
 	{
-		var state = position.State;
-		Dictionary<ulong, int> keyCount = new();
+		return position.State.Repetition < 0;
+		//var state = position.State;
+		//Dictionary<ulong, int> keyCount = new();
 
-		for (var i = 0; i < position.Ply; i++)
-		{
-			if (state == null)
-				break;
+		//for (var i = 0; i < position.Ply; i++)
+		//{
+		//	if (state == null)
+		//		break;
 
-			if (keyCount.ContainsKey(state.Key.Key))
-			{
-				keyCount.TryGetValue(state.Key.Key, out int count);
-				if (count >= 2)
-					return true;
+		//	if (keyCount.TryGetValue(state.Key.Key, out int count))
+		//	{
+		//		if (count >= 2)
+		//			return true;
 
-				keyCount.Remove(state.Key.Key);
-				keyCount.Add(state.Key.Key, count + 1);
-			}
-			else
-			{
-				keyCount.Add(state.Key.Key, 1);
-			}
+		//		keyCount.Remove(state.Key.Key);
+		//		keyCount.Add(state.Key.Key, count + 1);
+		//	}
+		//	else
+		//	{
+		//		keyCount.Add(state.Key.Key, 1);
+		//	}
 
-			state = state.Previous;
-		}
+		//	state = state.Previous;
+		//}
 
-		return false;
+		//return false;
 	}
 
 	public static bool IsInsufficientMaterial(this IPosition position)
@@ -90,37 +90,41 @@ public static class PositionExtensions
 			return true;
 
 		// If there is only one knight or bishop, then there is insufficient material
-		if (knightCount == 1 || bishopCount == 1)
+		if ((knightCount == 1 && bishopCount == 0) || (knightCount == 0 && bishopCount == 1))
 			return true;
 
-		var whiteBishopSquares = position.Squares(PieceTypes.Bishop, Player.White);
-		var blackBishopSquares = position.Squares(PieceTypes.Bishop, Player.Black);
+		var whiteBishops = position.Pieces(PieceTypes.Bishop, Player.White);
+		var blackBishops = position.Pieces(PieceTypes.Bishop, Player.Black);
+		int wbCount = whiteBishops.Count;
+		int bbCount = blackBishops.Count;
 
-		if (knightCount == 0 && whiteBishopSquares.Length == 1 && blackBishopSquares.Length == 1)
+		if (knightCount == 0 && whiteBishops.Count == 1 && blackBishops.Count == 1)
 			return true;
 
-		if (whiteBishopSquares.Length > 0)
+		if (knightCount == 0 && wbCount > 1)
 		{
 			// If all of white's bishops are on the same color, then it's insufficient material
-			bool wbFirstDark = whiteBishopSquares[0].IsDark;
+			bool wbFirstDark = BitBoards.PopLsb(ref whiteBishops).IsDark;
 			bool wFoundDifferent = false;
-			foreach (var wbSquare in whiteBishopSquares)
+			while (whiteBishops)
 			{
-				wFoundDifferent = wbSquare.IsDark != wbFirstDark;
+				var square = BitBoards.PopLsb(ref whiteBishops);
+				wFoundDifferent = square.IsDark != wbFirstDark;
 			}
 
 			if (!wFoundDifferent)
 				return true;
 		}
 
-		if (blackBishopSquares.Length > 0)
+		if (knightCount == 0 && bbCount > 1)
 		{
 			// If all of black's bishops are on the same color, then it's insufficient material
-			bool bbFirstDark = blackBishopSquares[0].IsDark;
+			bool bbFirstDark = BitBoards.PopLsb(ref blackBishops).IsDark;
 			bool bFoundDifferent = false;
-			foreach (var bbSquare in whiteBishopSquares)
+			while (blackBishops)
 			{
-				bFoundDifferent = bbSquare.IsDark != bbFirstDark;
+				var square = BitBoards.PopLsb(ref blackBishops);
+				bFoundDifferent = square.IsDark != bbFirstDark;
 			}
 
 			if (!bFoundDifferent)

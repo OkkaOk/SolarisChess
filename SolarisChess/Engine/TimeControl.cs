@@ -8,10 +8,10 @@ namespace SolarisChess;
 
 public class TimeControl
 {
-	public static readonly int TIME_MARGIN = 20;
 	public static readonly int BRANCHING_FACTOR_ESTIMATE = 3;
     public static readonly int MAX_TIME_REMAINING = int.MaxValue / 3; //large but not too large to cause overflow issues
-    public static readonly int MIN_MOVE_TIME = 200;
+    public static readonly int MIN_MOVE_TIME = 200;     // 0.2 seconds
+    public static readonly int MAX_MOVE_TIME = 120000;  // 2 minutes
 
     private int startTime;
     private int remaining;
@@ -31,7 +31,7 @@ public class TimeControl
     private long tN = -1;
 
 	//public int AllocatedTimePerMove => TimeRemaining / movesToGo - TIME_MARGIN;
-	private int TimeRemaining => moveTime == 0 ? remaining - TIME_MARGIN : moveTime;
+	private int TimeRemaining => moveTime == 0 ? remaining : moveTime;
 
     private static long Now => Stopwatch.GetTimestamp();
     public int Elapsed => MilliSeconds(Now - t0);
@@ -42,25 +42,29 @@ public class TimeControl
         get
         {
             if (moveTime != 0)
-                return moveTime - TIME_MARGIN;
+                return moveTime;
 
             if (startTime != 0)
             {
                 // Add some of the time lead to the available time
                 //int lead = (int)(Max(0, Abs(remaining) - Abs(opponentRemaining)) * 0.2f);
-				int lead = (int)MathExtensions.Clamp((remaining - opponentRemaining) * 0.2d, 0, 4000);
+				int lead = (int)Clamp((remaining - opponentRemaining) * 0.2d, 0, 4000);
 
                 if (movesToGo != 0)
-			        return remaining / movesToGo - TIME_MARGIN + lead;
+			        return remaining / movesToGo + lead;
 
                 //float percentage = Max(0.2f, TimeRemaining / startTime);
                 //float divisor = 500 * percentage;
-                double phaseMultiplier = Max(0.6f, PositionEvaluator.CalculatePhase(Engine.Game.Pos));
+
+                // Let's give the engine more time at the beginning so it can get a good lead hopefully
+                double phaseMultiplier = Max(0.6d, 1d - PositionEvaluator.CalculatePhase(Engine.Game.Pos));
 
                 //return (int)(Pow(TimeRemaining, 1.2f) * phaseMultiplier / divisor) + lead;
 
-                var time = MathExtensions.Clamp(TimeRemaining * phaseMultiplier, MIN_MOVE_TIME, 500000);
-                return Max(MIN_MOVE_TIME, (int)(-0.0000001d * Pow(time, 2d) + 0.07d * time + 100) + lead);
+                var time = Clamp(TimeRemaining * phaseMultiplier, MIN_MOVE_TIME, 500000);
+                var allocated = (int)(-0.0000001d * Pow(time, 2d) + 0.07d * time + 100) + lead;
+
+				return Clamp(allocated, MIN_MOVE_TIME, MAX_MOVE_TIME);
 			}
 
             return MAX_TIME_REMAINING;
@@ -160,7 +164,7 @@ public class TimeControl
 		int estimate = Elapsed + ElapsedInterval * BRANCHING_FACTOR_ESTIMATE;
 
 		//we need to stay within the per-move time budget
-		if (estimate > AllocatedTimePerMove + increment)
+		if (estimate > 2 * AllocatedTimePerMove + increment)
 			return false;
 
 		//shouldn't spend more then the 2x the average on a move

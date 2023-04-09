@@ -14,18 +14,23 @@ using Rudzoft.ChessLib.Validation;
 using SolarisChess.Extensions;
 using Rudzoft.ChessLib.Polyglot;
 using Microsoft.Extensions.Primitives;
+using static System.Formats.Asn1.AsnWriter;
+using System.Drawing;
+using System.Diagnostics;
+using System.Numerics;
 
 namespace SolarisChess;
 
 public static class Engine
 {
-    public const string name = "SolarisChess 1.2";
+    public const string name = "SolarisChess 1.3";
     public const string author = "Okka";
 
 	public readonly static TimeControl Controller = new TimeControl();
     public readonly static Game Game;
 	public readonly static TranspositionTable Table;
 	public readonly static Search search;
+	static bool Logging = true;
 
 	public static bool Ponder { get; private set; }
 	public static bool Running { get; private set; }
@@ -70,8 +75,7 @@ public static class Engine
 				Console.WriteLine($"id name {name}");
 				Console.WriteLine($"id author {author}");
 				Console.WriteLine("option name Hash type spin default 128 min 8 max 2048");
-				Console.WriteLine("option name Ponder type check default false");
-				//Console.WriteLine("option name OwnBook type check default false");
+				Console.WriteLine("option name Ponder type check default true");
 				Console.WriteLine(Game.Uci.UciOk());
 				break;
 			case "isready":
@@ -104,9 +108,12 @@ public static class Engine
 				Console.WriteLine(ToAscii(Game.Pos));
 				break;
 			case "test":
-				//Console.WriteLine($"Moves:          {engine.Game.Moves().Length}");
-				//Console.WriteLine($"Capture Moves:  {engine.Game.CaptureMoves().Length}");
+				//Console.WriteLine($"Moves:          {Game.Moves().Length}");
+				//Console.WriteLine($"Capture Moves:  {Game.CaptureMoves().Length}");
 				TestFunction();
+				break;
+			case "bench":
+				BenchEngine();
 				break;
 			default:
 				Console.WriteLine("UNKNOWN INPUT " + command);
@@ -117,6 +124,8 @@ public static class Engine
 	public static async Task Start()
     {
         Running = true;
+		Ponder = true;
+
 		await Read();
     }
 
@@ -282,41 +291,24 @@ public static class Engine
 		}
 	}
 
-	public static void OnInfo(int depth, int score, long nodes, int timeMs, int hashPerMille, ValMove[] pvLine)
+	public static void OnInfo(int depth, int selDepth, int score, long nodes, int timeUs, int hashPerMille, ValMove[] pvLine)
 	{
-		double tS = Math.Max(1, timeMs) / 1000.0;
+		if (!Logging)
+			return;
+
+		double tS = Math.Max(1, timeUs) / 1000000.0;
 		int nps = (int)(nodes / tS);
-		StringBuilder sb = new();
-		sb.Append($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs} hashfull {hashPerMille} multipv 1 pv");
-		//sb.Append($"info depth {depth} score {ScoreToString(score)} nodes {nodes} nps {nps} time {timeMs} hashfull {hashPerMille}");
+		
+		var infoString = string.Format("info depth {0} seldepth {1} score {2} nodes {3} nps {4} time {5} hashfull {6} multipv 1 pv {7}",
+							depth, selDepth, ScoreToString(score), nodes, nps, timeUs/1000, hashPerMille, PVToString(pvLine));
 
-		List<ValMove> tempMoves = new();
-
-		foreach (var move in pvLine)
-		{
-			if (move.Move.IsNullMove() || !move.Move.IsValidMove() || !Game.Pos.IsLegal(move.Move))
-				break;
-
-			sb.Append(" " + Game.Uci.MoveToString(move.Move));
-
-			Game.Pos.MakeMove(move, null);
-			tempMoves.Add(move);
-
-			if (Game.Pos.IsMate || Game.Pos.IsDraw() || !Game.Pos.Validate().IsOk)
-				break;
-		}
-
-		for (int i = tempMoves.Count - 1; i >= 0; i--)
-		{
-			Game.Pos.TakeMove(tempMoves[i]);
-		}
-
-		Console.WriteLine(sb);
+		Console.WriteLine(infoString);
 	}
 
 	public static void Log(string message)
 	{
-		Console.WriteLine($"info string {message}");
+		if (Logging)
+			Console.WriteLine($"info string {message}");
 	}
 
 	public static bool TryParse(string[] tokens, string name, out int value, int defaultValue = 0)
@@ -398,10 +390,129 @@ public static class Engine
 		return $"cp {score}";
 	}
 
+	private static string PVToString(ValMove[] pv)
+	{
+		List<string> validUCIMoves = new();
+		List<ValMove> tempMoves = new();
+
+		foreach (var move in pv)
+		{
+			try
+			{
+				var movePiece = Game.Pos.GetPiece(move.Move.FromSquare());
+				var capturePiece = Game.Pos.GetPiece(move.Move.ToSquare());
+
+				if (capturePiece.Type() != PieceTypes.NoPieceType && capturePiece.ColorOf() == Game.Pos.SideToMove && !move.Move.IsType(MoveTypes.Castling))
+					break;
+
+				if (movePiece.Type() == PieceTypes.NoPieceType || movePiece.ColorOf() != Game.Pos.SideToMove)
+					break;
+
+				if (move.Move.IsNullMove() || !move.Move.IsValidMove() || !Game.Pos.IsLegal(move.Move))
+					break;
+
+
+				validUCIMoves.Add(Game.Uci.MoveToString(move.Move));
+				tempMoves.Add(move);
+				Game.Pos.MakeMove(move, null);
+
+				if (Game.Pos.IsMate || Game.Pos.IsDraw() || !Game.Pos.Validate().IsOk)
+					break;
+
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine("Exception: " + e.Message);
+				Console.WriteLine("Trace: " + e.StackTrace);
+				break;
+			}
+		}
+
+		for (int i = tempMoves.Count - 1; i >= 0; i--)
+		{
+			Game.Pos.TakeMove(tempMoves[i]);
+		}
+
+		var pvLength = 0;
+		foreach (var move in pv)
+		{
+			if (move.Move.IsNullMove())
+				break;
+			pvLength++;
+		}
+
+		if (tempMoves.Count != pvLength)
+			Log("There were errors in the pv line. PV length: " + pvLength + ". What we got: " + tempMoves.Count);
+
+		return string.Join(" ", validUCIMoves);
+	}
+
 	private static void TestFunction()
 	{
-		var moveList = Game.Pos.GenerateMoves();
-		foreach (var move in moveList.Get())
-			Console.WriteLine(move.Move.ToString());
+		// position startpos moves d2d4 g8f6 c2c4 e7e6 g1f3 b7b6 g2g3 c8a6 b2b3 f8b4 c1d2 b4e7 f1g2 c7c6 d2c3 d7d5 f3e5 f6d7 e5d7 b8d7 b1d2 b6b5 c4d5 c6d5 e2e4 a8c8 c3b2 d7b6 a2a3 e8g8 f2f3 d8d7 h2h3 c8c7 d1e2 a6b7 e1g1 c7c2 a1b1 b5b4 e2d3 f8c8 a3b4 e7b4 f1f2 e6e5 d4e5 b4c5 b3b4 c5f2 g1f2 b7a6 d3d4 d5e4 d4d7 b6d7 f2e3 a6d3 f3e4 c2d2 e3d2 d3b1 b2c3 d7b6 g2f3 c8c4
+		var pawns = Game.Pos.Pieces(PieceTypes.Pawn, Player.White);
+
+		foreach (var square in pawns)
+		{
+			var file = square.File;
+			var rank = square.Rank;
+
+			// Multiple pawns on the same file
+			var pawnCountOnFile = (pawns & BitBoards.FileBB(file)).Count;
+			if (pawnCountOnFile > 1)
+				Console.WriteLine("Stacked pawns at:" + square.ToString());
+
+			// Isolated pawns
+			if ((pawns & BitBoards.AdjacentFiles(file)).Count == 0)
+				Console.WriteLine("Isolated pawn at:" + square.ToString());
+
+			// TODO: Backward pawns
+
+			// TODO: Pawn Chains
+
+			// Passed pawns
+			if (Game.Pos.IsPawnPassedAt(Player.White, square.ToString()))
+				Console.WriteLine("Passed pawn at: " + square.ToString());
+		}
+	}
+
+	private static void BenchEngine()
+	{
+		long totalNodes = 0;
+		var timer = Stopwatch.StartNew();
+
+		Logging = false;
+
+		void SearchFen(string? fen, int depth)
+		{
+			if (fen == null)
+				Game.NewGame();
+			else
+				Game.NewGame(fen);
+
+			Controller.Initialize(0, 0, 0, 0, depth, 0, 0);
+			search.IterativeDeepeningSearch(Game.Pos);
+			totalNodes += search.TotalNodes;
+			Table.Clear();
+		}
+
+		SearchFen(null, 8);
+
+		// a1b1 a7a8
+		SearchFen("8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w - - 0 1", 14);
+
+		// f7e8 b7a7
+		SearchFen("8/1K3b2/1n6/3n1k2/8/8/8/8 b - - 1 1", 10);
+
+		// best: b4f4. Ponder: h4g3
+		SearchFen("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 10);
+
+		// Good bestmoves: b2b3, c1e3, e1f1
+		SearchFen("3r1rk1/pp3ppp/2n5/2Q5/8/8/PPP2PPP/R1B1R1K1 w - - 0 1", 7);
+
+		Logging = true;
+
+		Console.WriteLine("\nNodes visited: " + totalNodes);
+		Console.WriteLine("Took: " + timer.ElapsedMilliseconds + "ms. NPS: " + totalNodes * 1000 / timer.ElapsedMilliseconds);
 	}
 }

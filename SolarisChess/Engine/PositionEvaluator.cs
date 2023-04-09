@@ -34,6 +34,8 @@ public class PositionEvaluator
 	/// (Start) 0 - 1 (Endgame)
 	/// </summary>
 	static float phase = 0;
+	
+	// TODO: Remove static when implementing threading.
 
 	// Performs static evaluation of the current position.
 	// The position is assumed to be 'quiet', i.e no captures are available that could drastically affect the evaluation.
@@ -55,7 +57,7 @@ public class PositionEvaluator
 		eval += whiteMaterial - blackMaterial;
 		eval += EvaluatePieceSquareTables(position);
 		eval += CalculateMobilityScore(position);
-		eval += CalculatePassedPawnScore(position);
+		eval += EvaluatePawnStructure(position, Player.White) - EvaluatePawnStructure(position, Player.Black);
 
 		if (Abs(eval) > 200 && phase > 0.5f)
 		{
@@ -124,6 +126,59 @@ public class PositionEvaluator
 		blackMaterial = blackMaterialNoPawns + blackPawnCount * pawnValue;
 	}
 
+	static int EvaluatePawnStructure(IPosition position, Player side)
+	{
+		int score = 0;
+
+		var friendlyPawns = position.Pieces(PieceTypes.Pawn, side);
+		var opponentPawns = position.Pieces(PieceTypes.Pawn, ~side);
+
+		while (friendlyPawns)
+		{
+			var square = BitBoards.PopLsb(ref friendlyPawns);
+			var file = square.File;
+			var rank = square.Rank;
+			var relativeRank = square.RelativeRank(side);
+
+			// Multiple pawns on the same file
+			var pawnCountOnFile = (friendlyPawns & BitBoards.FileBB(file)).Count;
+			if (pawnCountOnFile > 1)
+			{
+				score -= (pawnCountOnFile - 1) * 10;
+			}
+
+			int friendlyPawnCountOnAdjacentFiles = (friendlyPawns & BitBoards.AdjacentFiles(file)).Count;
+			int opponentPawnCountOnAdjacentFiles = (opponentPawns & BitBoards.AdjacentFiles(file)).Count;
+
+			// Isolated pawns
+			if (friendlyPawnCountOnAdjacentFiles == 0)
+			{
+				score -= 10;
+			}
+
+			// Backward pawns
+			if (friendlyPawnCountOnAdjacentFiles == 0 && opponentPawnCountOnAdjacentFiles > 0)
+			{
+				score -= 10;
+			}
+
+			// Get the number of pawns this pawn is connected to
+			var connectedPawns = BitBoards.PopCount(friendlyPawns & square.PawnAttack(side));
+
+			// Promote pawn chains
+			if (connectedPawns > 0)
+			{
+				score += 10;
+			}
+
+			// Passed pawns
+			if (position.IsPawnPassedAt(side, square))
+				score += relativeRank.AsInt() * 10 * (connectedPawns + 1); // Higher score for pawns closer to promotion
+		}
+
+		return score;
+	}
+
 	public static int CalculateMobilityScore(IPosition position)
 	{
 		int GetScore(Player side)
@@ -178,33 +233,6 @@ public class PositionEvaluator
 		return GetScore(Player.White) - GetScore(Player.Black);
 	}
 
-	static int CalculatePassedPawnScore(IPosition position)
-	{
-		if (phase < 0.8f)
-			return 0;
-
-		int eval = 0;
-
-		var whitePawns = position.Pieces(PieceTypes.Pawn, Player.White);
-		var blackPawns = position.Pieces(PieceTypes.Pawn, Player.Black);
-
-		while (whitePawns)
-		{
-			var pawnSquare = BitBoards.PopLsb(ref whitePawns);
-			if (position.IsPawnPassedAt(Player.White, pawnSquare))
-				eval += 10;
-		}
-
-		while (blackPawns)
-		{
-			var pawnSquare = BitBoards.PopLsb(ref blackPawns);
-			if (position.IsPawnPassedAt(Player.Black, pawnSquare))
-				eval -= 10;
-		}
-
-		return eval;
-	}
-
 	static int MopUpEval(IPosition position, Player winningSide)
 	{
 		int mopUpScore = 0;
@@ -229,27 +257,30 @@ public class PositionEvaluator
 	{
 		int eval = 0;
 
-		var whitePieces = position.Pieces(Player.White);
-		var blackPieces = position.Pieces(Player.Black);
-
-		while (whitePieces)
+		// Pawn to Queen (1-5)
+		for (int i = 1; i < 6; i++)
 		{
-			var sq = BitBoards.PopLsb(ref whitePieces);
+			var type = (PieceTypes)i;
+			GetPieceSquareTable(type, out int[] middleTable, out int[] endTable);
 
-			var piece = position.GetPiece(sq);
-			GetPieceSquareTable(piece.Type(), out int[] middleTable, out int[] endTable);
-			eval += (int)(PieceSquareTable.Read(middleTable, sq, true) * (1 - phase));
-			eval += (int)(PieceSquareTable.Read(endTable, sq, true) * phase);
-		}
+			var whitePieces = position.Pieces(type, Player.White);
+			var blackPieces = position.Pieces(type, Player.Black);
 
-		while (blackPieces)
-		{
-			var sq = BitBoards.PopLsb(ref blackPieces);
+			while (whitePieces)
+			{
+				var sq = BitBoards.PopLsb(ref whitePieces);
 
-			var piece = position.GetPiece(sq);
-			GetPieceSquareTable(piece.Type(), out int[] middleTable, out int[] endTable);
-			eval -= (int)(PieceSquareTable.Read(middleTable, sq, false) * (1 - phase));
-			eval -= (int)(PieceSquareTable.Read(endTable, sq, false) * phase);
+				eval += (int)(PieceSquareTable.Read(middleTable, sq, true) * (1 - phase));
+				eval += (int)(PieceSquareTable.Read(endTable, sq, true) * phase);
+			}
+
+			while (blackPieces)
+			{
+				var sq = BitBoards.PopLsb(ref blackPieces);
+
+				eval -= (int)(PieceSquareTable.Read(middleTable, sq, false) * (1 - phase));
+				eval -= (int)(PieceSquareTable.Read(endTable, sq, false) * phase);
+			}
 		}
 
 		return eval;
